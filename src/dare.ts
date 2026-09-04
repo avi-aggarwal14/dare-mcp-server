@@ -635,7 +635,7 @@ export class DareService {
   async waitForGeneration(
     id: string,
     timeoutMs: number,
-    intervalMs = 5_000,
+    intervalMs = 10_000,
   ): Promise<{ generation: any; status: string; timedOut: boolean }> {
     const deadline = Date.now() + timeoutMs;
     let last: any = await this.getGeneration(id);

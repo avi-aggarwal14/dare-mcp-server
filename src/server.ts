@@ -283,9 +283,11 @@ export function createServer(config: DareConfig = loadConfig()): McpServer {
       title: "Generate a video on Dare",
       description:
         "Generate a video from a text prompt on Dare, defaulting to Seedance 2.5. SPENDS CREDITS from the " +
-        "signed-in Dare account. Returns generation ids immediately; set wait_seconds to block until the first " +
-        "one finishes, otherwise poll with dare_get_generation. Attach reference images, clips or audio by " +
-        "uploading them first with dare_upload_media and passing the storage keys.",
+        "signed-in Dare account (a 10s 720p Seedance 2.5 clip is ~110 credits; call dare_estimate_cost first). " +
+        "Returns generation ids immediately. Rendering is slow — Seedance 2.5 jobs commonly take 5–15 minutes — " +
+        "so leave wait_seconds at 0 and poll with dare_get_generation, or set it only if your client tolerates " +
+        "long tool calls. Attach reference images, clips or audio by uploading them first with dare_upload_media " +
+        "and passing the storage keys.",
       inputSchema: {
         prompt: z.string().min(1).describe("What the video should show. Be specific about subject, action, camera and style."),
         model: z
@@ -343,7 +345,7 @@ export function createServer(config: DareConfig = loadConfig()): McpServer {
         }
 
         const ids = result.ids ?? [];
-        const waited = await settleWait(dare, ids[0], args.wait_seconds, 5_000);
+        const waited = await settleWait(dare, ids[0], args.wait_seconds, 10_000);
 
         const structured = {
           generation_ids: ids,
@@ -428,8 +430,10 @@ export function createServer(config: DareConfig = loadConfig()): McpServer {
     {
       title: "Get a Dare generation",
       description:
-        "Fetch one generation by id: its status (queued, running, completed, failed), prompt, settings and — " +
-        "once finished — the output asset URL. Read-only. Poll this after dare_generate_video.",
+        "Fetch one generation by id: its status (queued, processing, succeeded, failed), credits charged, and — " +
+        "once finished — the output asset URL. Read-only. Poll this after dare_generate_video; video jobs commonly " +
+        "take 5–15 minutes. Use wait_seconds to block for up to that long per call, sized to what your client's " +
+        "tool timeout allows (e.g. 45 for desktop apps, 300+ for Claude Code), and call again until status is terminal.",
       inputSchema: {
         generation_id: z.string().min(1).describe("Generation id returned by a dare_generate_* tool."),
         wait_seconds: z
@@ -464,8 +468,10 @@ export function createServer(config: DareConfig = loadConfig()): McpServer {
           generation?.stage || generation?.stageProgress != null
             ? `${generation.stage ?? "working"}${generation.stageProgress != null ? ` ${Math.round(generation.stageProgress * 100)}%` : ""}`
             : null;
+        const createdAt = generation?.createdAt ? new Date(generation.createdAt).getTime() : NaN;
+        const elapsed = Number.isFinite(createdAt) ? Math.round((Date.now() - createdAt) / 1000) : null;
         const md = [
-          `Generation \`${generation_id}\` — status: **${status || "unknown"}**${progress ? ` (${progress})` : ""}`,
+          `Generation \`${generation_id}\` — status: **${status || "unknown"}**${progress ? ` (${progress})` : ""}${elapsed != null ? ` · ${elapsed}s since submission` : ""}`,
           generation?.model ? `Model: ${generation.model}${generation.creditsCharged != null ? ` · credits charged: ${generation.creditsCharged}` : ""}` : "",
           generation?.failureMessage ? `Failure: ${generation.failureMessage}` : "",
           timedOut ? `Still running after ${wait_seconds}s; poll again.` : "",
@@ -481,6 +487,7 @@ export function createServer(config: DareConfig = loadConfig()): McpServer {
             output_url: url,
             credits_charged: generation?.creditsCharged ?? null,
             failure_message: generation?.failureMessage ?? null,
+            seconds_since_submission: elapsed,
             generation,
           },
           summary: render(response_format, md, generation),
