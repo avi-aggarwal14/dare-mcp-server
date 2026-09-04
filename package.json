@@ -1,0 +1,36 @@
+{
+  "name": "dare-mcp-server",
+  "version": "0.1.0",
+  "description": "MCP server for Dare (trydare.com) AI video generation — Seedance 2.5, Veo 3.1, Kling 3, Hailuo 2.3 and more, billed to your Dare credits.",
+  "type": "module",
+  "bin": {
+    "dare-mcp-server": "dist/stdio.js",
+    "dare-mcp-check": "dist/check.js"
+  },
+  "main": "dist/stdio.js",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/stdio.js",
+    "start:http": "node dist/http.js",
+    "inspect": "npx @modelcontextprotocol/inspector node dist/stdio.js",
+    "prepare": "npm run build",
+    "check": "node dist/check.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "express": "^5.1.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  }
+}
