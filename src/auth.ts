@@ -54,12 +54,14 @@ export class ClerkTokenProvider {
       response = await fetch(this.fapiUrl(path), {
         ...init,
         signal: controller.signal,
+        // Clerk's Frontend API refuses requests carrying both Origin and Authorization
+        // (origin_authorization_headers_conflict), so authenticate with the cookie alone,
+        // exactly as the browser does.
         headers: {
           Accept: "application/json",
           Origin: this.config.webUrl,
           Referer: `${this.config.webUrl}/`,
           Cookie: `__client=${this.config.clientToken}`,
-          Authorization: `Bearer ${this.config.clientToken}`,
           ...(init.headers as Record<string, string> | undefined),
         },
       });

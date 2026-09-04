@@ -454,15 +454,29 @@ export function createServer(config: DareConfig = loadConfig()): McpServer {
         }
 
         const url = outputUrlOf(generation);
+        const progress =
+          generation?.stage || generation?.stageProgress != null
+            ? `${generation.stage ?? "working"}${generation.stageProgress != null ? ` ${Math.round(generation.stageProgress * 100)}%` : ""}`
+            : null;
         const md = [
-          `Generation \`${generation_id}\` — status: **${status || "unknown"}**`,
+          `Generation \`${generation_id}\` — status: **${status || "unknown"}**${progress ? ` (${progress})` : ""}`,
+          generation?.model ? `Model: ${generation.model}${generation.creditsCharged != null ? ` · credits charged: ${generation.creditsCharged}` : ""}` : "",
+          generation?.failureMessage ? `Failure: ${generation.failureMessage}` : "",
           timedOut ? `Still running after ${wait_seconds}s; poll again.` : "",
           url ? `Output: ${url}` : "No output asset yet.",
         ]
           .filter(Boolean)
           .join("\n");
         return {
-          structured: { generation_id, status: status || "unknown", timed_out: timedOut, output_url: url, generation },
+          structured: {
+            generation_id,
+            status: status || "unknown",
+            timed_out: timedOut,
+            output_url: url,
+            credits_charged: generation?.creditsCharged ?? null,
+            failure_message: generation?.failureMessage ?? null,
+            generation,
+          },
           summary: render(response_format, md, generation),
         };
       }),

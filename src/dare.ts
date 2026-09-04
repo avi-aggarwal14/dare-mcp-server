@@ -87,6 +87,17 @@ function isBlockedAddress(ip: string): boolean {
   return lower === "::1" || lower.startsWith("fc") || lower.startsWith("fd") || lower.startsWith("fe80");
 }
 
+/**
+ * Dare's composer inserts an `@<storageKey>` mention into the prompt for every attached
+ * asset (the stored `inputs.prompt` of real generations shows this). Append any that the
+ * caller did not already place, so the server sees the same shape the web app sends.
+ */
+function withMentions(prompt: string, storageKeys: string[]): string {
+  const missing = storageKeys.filter((key) => !prompt.includes(`@${key}`));
+  if (missing.length === 0) return prompt;
+  return `${prompt.trimEnd()} ${missing.map((key) => `@${key}`).join(" ")}`;
+}
+
 export interface ReferenceSummary {
   /** Seconds of *video* reference material. */
   videoSeconds: number;
@@ -516,7 +527,7 @@ export class DareService {
 
     const generationSpec: Record<string, unknown> = {
       tool: "create_video",
-      prompt: args.prompt,
+      prompt: withMentions(args.prompt, references),
       model: args.model,
       aspectRatio: autoFromVideo ? "auto" : aspectRatio,
       quality,
@@ -576,7 +587,7 @@ export class DareService {
 
     const generationSpec: Record<string, unknown> = {
       tool: "create_image",
-      prompt: args.prompt,
+      prompt: withMentions(args.prompt, references),
       model: args.model,
       aspectRatio,
       quality,
