@@ -96,14 +96,40 @@ export class DareRpcClient {
         }
         throw authError(
           `Dare rejected the request to ${procedure}: ${message}` +
-            (REPLAYABLE.has(procedure) ? "" : " (not retried automatically — this call can spend credits)"),
+            (procedure === "generations.create" ? " (not retried automatically: this call spends credits)" : ""),
         );
       }
       if (response.status === 404) {
+        // Dare answers a missing *row* with an oRPC NOT_FOUND body; a missing *procedure*
+        // comes back as a bare 404 with no oRPC envelope.
+        if (parsed && code === "NOT_FOUND") {
+          throw new DareError(`Dare could not find that record (${procedure}): ${message}`, {
+            code: "DARE_NOT_FOUND",
+            status: 404,
+            hint: "Check the id — it may have been deleted or belong to a different account.",
+          });
+        }
         throw new DareError(`Dare has no procedure named ${procedure}.`, {
           code: "DARE_UNKNOWN_PROCEDURE",
           status: 404,
           hint: "Dare's internal API is undocumented and may have changed. The procedure names live in src/dare.ts; compare against a fresh capture from the Dare web app's network tab.",
+        });
+      }
+      if (response.status === 400 || code === "INPUT_VALIDATION_FAILED" || code === "BAD_REQUEST") {
+        // Surface zod issue paths so a contract drift is diagnosable from the error alone.
+        const issues = Array.isArray(payload?.data?.issues)
+          ? payload.data.issues.map((i: any) => `${(i.path ?? []).join(".") || "(root)"}: ${i.message}`).join("; ")
+          : payload?.data
+            ? JSON.stringify(payload.data).slice(0, 500)
+            : "";
+        throw new DareError(`Dare rejected the input to ${procedure}: ${message}${issues ? ` [${issues}]` : ""}`, {
+          code: "DARE_BAD_REQUEST",
+          status: response.status,
+          // Field-level issues mean our request shape drifted from Dare's schema; a plain
+          // message is Dare describing a problem with the data itself.
+          hint: issues
+            ? "The request shape no longer matches Dare's schema. Compare src/dare.ts against the web app's current request (see CLAUDE.md)."
+            : "Adjust the input as the message describes.",
         });
       }
       if (response.status === 429) {

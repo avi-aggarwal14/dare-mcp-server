@@ -1,5 +1,5 @@
 import { extname, resolve, sep } from "node:path";
-import { readFile } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import { lookup as dnsLookup } from "node:dns/promises";
 import { randomUUID } from "node:crypto";
 import type { DareConfig } from "./config.js";
@@ -81,10 +81,49 @@ function mediaKindFromMime(mime: string): MediaKind | null {
 }
 
 function isBlockedAddress(ip: string): boolean {
-  if (/^(127\.|10\.|169\.254\.|192\.168\.|0\.)/.test(ip)) return true;
-  if (/^172\.(1[6-9]|2\d|3[01])\./.test(ip)) return true;
+  let v4 = ip;
+  // IPv4-mapped IPv6 (::ffff:127.0.0.1) must be judged as the IPv4 it wraps.
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(ip);
+  if (mapped) v4 = mapped[1]!;
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(v4)) {
+    const [a, b] = v4.split(".").map(Number) as [number, number];
+    if (a === 0 || a === 10 || a === 127) return true; // this-host, private, loopback
+    if (a === 169 && b === 254) return true; // link-local / cloud metadata
+    if (a === 172 && b >= 16 && b <= 31) return true; // private
+    if (a === 192 && b === 168) return true; // private
+    if (a === 100 && b >= 64 && b <= 127) return true; // carrier-grade NAT
+    if (a >= 224) return true; // multicast and reserved
+    return false;
+  }
   const lower = ip.toLowerCase();
-  return lower === "::1" || lower.startsWith("fc") || lower.startsWith("fd") || lower.startsWith("fe80");
+  if (lower === "::" || lower === "::1") return true;
+  if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // unique local
+  if (lower.startsWith("fe8") || lower.startsWith("fe9") || lower.startsWith("fea") || lower.startsWith("feb")) return true; // link-local
+  if (lower.startsWith("ff")) return true; // multicast
+  return false;
+}
+
+/** Resolves a hostname and refuses anything that lands in a private or special-use range. */
+async function assertPublicHost(hostname: string): Promise<void> {
+  const bare = hostname.replace(/^\[|\]$/g, "");
+  if (bare === "localhost" || bare.endsWith(".localhost") || bare.endsWith(".local")) {
+    throw new DareError(`Refusing to fetch ${hostname}: local hostname.`, {
+      code: "DARE_UPLOAD_FORBIDDEN",
+      hint: "Only public URLs can be uploaded.",
+    });
+  }
+  let addresses: string[];
+  try {
+    addresses = (await dnsLookup(bare, { all: true })).map((entry) => entry.address);
+  } catch {
+    throw new DareError(`Could not resolve ${hostname}.`, { code: "DARE_NETWORK", hint: "Check the URL." });
+  }
+  if (addresses.length === 0 || addresses.some(isBlockedAddress)) {
+    throw new DareError(`Refusing to fetch ${hostname}: resolves to a private or reserved address.`, {
+      code: "DARE_UPLOAD_FORBIDDEN",
+      hint: "Only public URLs can be uploaded.",
+    });
+  }
 }
 
 /**
@@ -99,10 +138,16 @@ function withMentions(prompt: string, storageKeys: string[]): string {
 }
 
 export interface ReferenceSummary {
-  /** Seconds of *video* reference material. */
-  videoSeconds: number;
+  /** Seconds of video reference as Dare prices it (unknown lengths count as 30s). */
+  pricedVideoSeconds: number;
+  /** Seconds of video reference actually known, for limit checks. */
+  knownVideoSeconds: number;
+  /** Seconds of audio reference actually known, for limit checks. */
+  knownAudioSeconds: number;
   countsByKind: Record<MediaKind, number>;
-  /** Storage keys whose media info could not be read. */
+  /** Per-reference durations where known, for per-clip limits. */
+  clipSeconds: Array<{ key: string; kind: MediaKind; seconds: number | null }>;
+  /** Storage keys Dare reports as not found. */
   unresolved: string[];
 }
 
@@ -123,14 +168,17 @@ export class DareService {
   }
 
   /**
-   * Describes the attached references. Media info failures are reported rather than
-   * swallowed, because the cost guard must fail closed: an unknown reference duration
-   * can understate a Seedance 2.5 estimate several-fold.
+   * Describes the attached references. A reference Dare cannot find is reported as
+   * unresolved; any other failure (auth, network, server) is rethrown so the caller sees
+   * the real cause rather than a misleading "check your storage keys".
    */
   private async summariseReferences(storageKeys: string[]): Promise<ReferenceSummary> {
     const summary: ReferenceSummary = {
-      videoSeconds: 0,
+      pricedVideoSeconds: 0,
+      knownVideoSeconds: 0,
+      knownAudioSeconds: 0,
       countsByKind: { image: 0, video: 0, audio: 0 },
+      clipSeconds: [],
       unresolved: [],
     };
     if (storageKeys.length === 0) return summary;
@@ -139,27 +187,33 @@ export class DareService {
       storageKeys.map(async (key) => {
         try {
           return { key, info: await this.getMediaInfo(key) };
-        } catch {
-          return { key, info: null };
+        } catch (err) {
+          // Dare answers an unknown or unreadable storage key with NOT_FOUND or a 400
+          // "couldn't read this file". Either way the reference is unusable; anything else
+          // (auth, network, 5xx) is a real failure the caller must see.
+          if (err instanceof DareError && (err.code === "DARE_NOT_FOUND" || err.code === "DARE_BAD_REQUEST")) {
+            return { key, info: null };
+          }
+          throw err;
         }
       }),
     );
 
     for (const { key, info } of infos) {
-      if (!info) {
+      const kind = (info?.mediaType ?? info?.kind) as MediaKind | undefined;
+      if (!info || !kind || !(kind in summary.countsByKind)) {
         summary.unresolved.push(key);
         continue;
       }
-      const kind = (info.mediaType ?? info.kind) as MediaKind | undefined;
-      if (kind && kind in summary.countsByKind) {
-        summary.countsByKind[kind] += 1;
-      } else {
-        summary.unresolved.push(key);
-        continue;
-      }
+      summary.countsByKind[kind] += 1;
+      const raw = Number(info.durationSeconds);
+      const seconds = Number.isFinite(raw) && raw > 0 ? raw : null;
+      summary.clipSeconds.push({ key, kind, seconds });
       if (kind === "video") {
-        const seconds = Number(info.durationSeconds ?? 0);
-        if (Number.isFinite(seconds)) summary.videoSeconds += seconds;
+        summary.pricedVideoSeconds += seconds ?? 30; // Dare's estimator assumes 30s when unknown
+        summary.knownVideoSeconds += seconds ?? 0;
+      } else if (kind === "audio") {
+        summary.knownAudioSeconds += seconds ?? 0;
       }
     }
     return summary;
@@ -167,25 +221,53 @@ export class DareService {
 
   /* ---------------- uploads ---------------- */
 
-  private assertReadableFile(filePath: string): string {
-    const absolute = resolve(filePath);
+  private async assertReadableFile(filePath: string): Promise<string> {
     if (this.config.uploadRoots.length === 0) {
       throw new DareError("Local file uploads are disabled.", {
         code: "DARE_UPLOAD_FORBIDDEN",
         hint: "Set DARE_UPLOAD_ROOTS to a comma-separated list of directories this server may read from, or pass `url`/`base64` instead.",
       });
     }
-    const allowed = this.config.uploadRoots.some((root) => {
-      const base = resolve(root);
-      return absolute === base || absolute.startsWith(base.endsWith(sep) ? base : base + sep);
-    });
+    // Resolve symlinks on both sides: a lexical prefix check is defeated by a link inside
+    // an allowed root that points at, say, the Claude config holding DARE_CLIENT_TOKEN.
+    let real: string;
+    try {
+      real = await realpath(resolve(filePath));
+    } catch {
+      throw new DareError(`${filePath} does not exist or cannot be read.`, {
+        code: "DARE_FILE_ERROR",
+        hint: "Check the path.",
+      });
+    }
+    const roots = await Promise.all(
+      this.config.uploadRoots.map(async (root) => {
+        try {
+          return await realpath(resolve(root));
+        } catch {
+          return null;
+        }
+      }),
+    );
+    const allowed = roots.some(
+      (base) => base !== null && (real === base || real.startsWith(base.endsWith(sep) ? base : base + sep)),
+    );
     if (!allowed) {
-      throw new DareError(`${absolute} is outside the permitted upload directories.`, {
+      throw new DareError(`${real} is outside the permitted upload directories.`, {
         code: "DARE_UPLOAD_FORBIDDEN",
         hint: `Permitted roots: ${this.config.uploadRoots.join(", ")}. Move the file there or add its directory to DARE_UPLOAD_ROOTS.`,
       });
     }
-    return absolute;
+    const info = await stat(real);
+    if (!info.isFile()) {
+      throw new DareError(`${real} is not a regular file.`, { code: "DARE_FILE_ERROR", hint: "Point at a media file." });
+    }
+    if (info.size > this.config.maxUploadBytes) {
+      throw new DareError(`${real} is ${info.size} bytes, over the ${this.config.maxUploadBytes} byte limit.`, {
+        code: "DARE_UPLOAD_TOO_LARGE",
+        hint: "Shrink the file or raise DARE_MAX_UPLOAD_BYTES.",
+      });
+    }
+    return real;
   }
 
   private async fetchRemote(url: string): Promise<{ bytes: Uint8Array; contentType?: string; name: string }> {
@@ -195,52 +277,76 @@ export class DareService {
         hint: "Pass base64 bytes instead, or enable DARE_ALLOW_URL_UPLOADS on a trusted local deployment.",
       });
     }
-    const parsed = new URL(url);
-    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-      throw new DareError(`Unsupported URL scheme ${parsed.protocol}`, { code: "DARE_BAD_INPUT" });
-    }
-    // Block SSRF into loopback / link-local / private ranges.
-    try {
-      const { address } = await dnsLookup(parsed.hostname);
-      if (isBlockedAddress(address)) {
-        throw new DareError(`Refusing to fetch ${parsed.hostname}: resolves to a private address.`, {
-          code: "DARE_UPLOAD_FORBIDDEN",
-          hint: "Only public URLs can be uploaded.",
-        });
-      }
-    } catch (err) {
-      if (err instanceof DareError) throw err;
-      throw new DareError(`Could not resolve ${parsed.hostname}.`, { code: "DARE_NETWORK" });
-    }
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.config.requestTimeoutMs);
     try {
-      const res = await fetch(url, { signal: controller.signal, redirect: "follow" });
-      if (!res.ok) {
-        throw new DareError(`Could not download ${url} (HTTP ${res.status}).`, {
+      // Follow redirects by hand so every hop is checked; a public URL that 302s to a
+      // link-local metadata endpoint must not be fetched.
+      let current = new URL(url);
+      let response: Response | null = null;
+      for (let hop = 0; hop < 5; hop++) {
+        if (current.protocol !== "https:" && current.protocol !== "http:") {
+          throw new DareError(`Unsupported URL scheme ${current.protocol}`, { code: "DARE_BAD_INPUT" });
+        }
+        await assertPublicHost(current.hostname);
+        const res = await fetch(current, { signal: controller.signal, redirect: "manual" });
+        if (res.status >= 300 && res.status < 400) {
+          const location = res.headers.get("location");
+          if (!location) break;
+          current = new URL(location, current);
+          continue;
+        }
+        response = res;
+        break;
+      }
+      if (!response) {
+        throw new DareError(`Too many redirects fetching ${url}.`, { code: "DARE_FETCH_ERROR" });
+      }
+      if (!response.ok) {
+        throw new DareError(`Could not download ${url} (HTTP ${response.status}).`, {
           code: "DARE_FETCH_ERROR",
           hint: "Check the URL is publicly reachable.",
         });
       }
-      const declared = Number(res.headers.get("content-length") ?? 0);
-      if (declared > this.config.maxUploadBytes) {
-        throw new DareError(`${url} is ${declared} bytes, over the ${this.config.maxUploadBytes} byte limit.`, {
+
+      const limit = this.config.maxUploadBytes;
+      const declared = Number(response.headers.get("content-length") ?? 0);
+      if (declared > limit) {
+        throw new DareError(`${url} is ${declared} bytes, over the ${limit} byte limit.`, {
           code: "DARE_UPLOAD_TOO_LARGE",
           hint: "Shrink the file or raise DARE_MAX_UPLOAD_BYTES.",
         });
       }
-      const buffer = new Uint8Array(await res.arrayBuffer());
-      if (buffer.byteLength > this.config.maxUploadBytes) {
-        throw new DareError(`Downloaded ${buffer.byteLength} bytes, over the ${this.config.maxUploadBytes} byte limit.`, {
-          code: "DARE_UPLOAD_TOO_LARGE",
-          hint: "Shrink the file or raise DARE_MAX_UPLOAD_BYTES.",
-        });
+      // Count bytes as they stream so a chunked response cannot exhaust memory first.
+      const chunks: Uint8Array[] = [];
+      let total = 0;
+      if (response.body) {
+        const reader = response.body.getReader();
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          total += value.byteLength;
+          if (total > limit) {
+            await reader.cancel().catch(() => undefined);
+            throw new DareError(`Download exceeded the ${limit} byte limit.`, {
+              code: "DARE_UPLOAD_TOO_LARGE",
+              hint: "Shrink the file or raise DARE_MAX_UPLOAD_BYTES.",
+            });
+          }
+          chunks.push(value);
+        }
+      }
+      const bytes = new Uint8Array(total);
+      let offset = 0;
+      for (const chunk of chunks) {
+        bytes.set(chunk, offset);
+        offset += chunk.byteLength;
       }
       return {
-        bytes: buffer,
-        contentType: res.headers.get("content-type")?.split(";")[0]?.trim() || undefined,
-        name: parsed.pathname.split("/").filter(Boolean).pop() || "upload",
+        bytes,
+        contentType: response.headers.get("content-type")?.split(";")[0]?.trim() || undefined,
+        name: current.pathname.split("/").filter(Boolean).pop() || "upload",
       };
     } catch (err) {
       if (err instanceof DareError) throw err;
@@ -265,19 +371,13 @@ export class DareService {
     let contentType = args.contentType;
 
     if (source.filePath) {
-      const absolute = this.assertReadableFile(source.filePath);
+      const absolute = await this.assertReadableFile(source.filePath);
       const buffer = await readFile(absolute).catch((err) => {
         throw new DareError(`Could not read ${absolute}: ${(err as Error).message}`, {
           code: "DARE_FILE_ERROR",
-          hint: "Check the path exists and is readable.",
+          hint: "Check the file is readable.",
         });
       });
-      if (buffer.byteLength > this.config.maxUploadBytes) {
-        throw new DareError(`${absolute} is ${buffer.byteLength} bytes, over the ${this.config.maxUploadBytes} byte limit.`, {
-          code: "DARE_UPLOAD_TOO_LARGE",
-          hint: "Shrink the file or raise DARE_MAX_UPLOAD_BYTES.",
-        });
-      }
       bytes = new Uint8Array(buffer);
       inferredName ||= absolute.split(sep).filter(Boolean).pop() || "upload";
       contentType ||= MIME_BY_EXT[extname(absolute).slice(1).toLowerCase()];
@@ -392,7 +492,7 @@ export class DareService {
     if (!Number.isFinite(estimated)) {
       throw new DareError(`Could not estimate the cost of this ${context}, and a credit guard is active.`, {
         code: "DARE_COST_GUARD",
-        hint: "Unset DARE_MAX_CREDITS_PER_CALL to proceed without an estimate, or use a model with a known price.",
+        hint: "Set DARE_MAX_CREDITS_PER_CALL=0 to proceed without an estimate, or use a model with a known price.",
       });
     }
     if (estimated > this.config.maxCreditsPerCall) {
@@ -431,7 +531,9 @@ export class DareService {
     webLinkIds?: string[];
     count?: number;
     projectId?: string;
-  }): Promise<CreateOutcome & { estimatedCredits: number; notes: string[] }> {
+    /** Validate, price and build the spec, but do not submit. */
+    dryRun?: boolean;
+  }): Promise<CreateOutcome & { estimatedCredits: number; notes: string[]; spec: Record<string, unknown> }> {
     const spec = VIDEO_MODELS[args.model];
     if (!spec) {
       throw new DareError(`Unknown video model "${args.model}".`, {
@@ -439,108 +541,148 @@ export class DareService {
         hint: `Choose one of: ${Object.keys(VIDEO_MODELS).join(", ")}. Call dare_list_models for each model's limits.`,
       });
     }
+    const bad = (message: string, hint: string): never => {
+      throw new DareError(message, { code: "DARE_BAD_INPUT", hint });
+    };
+    const notes: string[] = [];
 
-    const quality = args.quality ?? spec.defaults.quality;
-    if (!spec.qualities.includes(quality)) {
-      throw new DareError(`${spec.name} does not support quality "${quality}".`, {
-        code: "DARE_BAD_INPUT",
-        hint: `Supported qualities: ${spec.qualities.join(", ")}.`,
-      });
-    }
-
-    const aspectRatio = args.aspectRatio ?? spec.defaults.aspectRatio;
-    if (!spec.aspectRatios.includes(aspectRatio)) {
-      throw new DareError(`${spec.name} does not support aspect ratio "${aspectRatio}".`, {
-        code: "DARE_BAD_INPUT",
-        hint: `Supported aspect ratios: ${spec.aspectRatios.join(", ")}.`,
-      });
-    }
-
+    /* ---- references ---- */
     const references = args.referenceStorageKeys ?? [];
     if (references.length > spec.maxReferences.total) {
-      throw new DareError(
-        `${spec.name} accepts at most ${spec.maxReferences.total} references; ${references.length} given.`,
-        { code: "DARE_BAD_INPUT", hint: "Drop some references and retry." },
+      bad(
+        spec.maxReferences.total === 0
+          ? `${spec.name} does not accept reference media.`
+          : `${spec.name} accepts at most ${spec.maxReferences.total} references; ${references.length} given.`,
+        spec.maxReferences.total === 0 ? "Drop the references or choose a Seedance model." : "Drop some references and retry.",
       );
     }
-
-    const notes: string[] = [];
     const refs = await this.summariseReferences(references);
-
     if (refs.unresolved.length > 0) {
       // Fail closed: an unknown reference could be a 30s clip that triples the bill.
       throw new DareError(
-        `Could not read media info for ${refs.unresolved.length} reference(s): ${refs.unresolved.join(", ")}.`,
+        `Dare does not recognise ${refs.unresolved.length} reference storage key(s): ${refs.unresolved.join(", ")}.`,
         {
           code: "DARE_REFERENCE_UNKNOWN",
-          hint: "Confirm the storage keys came from dare_upload_media or dare_list_uploads, then retry. Cost cannot be estimated safely without them.",
+          hint: "Use storage keys returned by dare_upload_media or listed by dare_list_uploads.",
         },
       );
     }
-
-    for (const [kind, max] of Object.entries(spec.maxReferences.perKind ?? {})) {
-      const used = refs.countsByKind[kind as MediaKind];
+    for (const kind of ["image", "video", "audio"] as const) {
+      const used = refs.countsByKind[kind];
+      if (used === 0) continue;
+      if (!spec.referenceKinds.includes(kind)) {
+        bad(`${spec.name} does not accept ${kind} references.`, `Accepted kinds: ${spec.referenceKinds.join(", ") || "none"}.`);
+      }
+      const max = spec.maxReferences.perKind?.[kind];
       if (max !== undefined && used > max) {
-        throw new DareError(`${spec.name} accepts at most ${max} ${kind} reference(s); ${used} given.`, {
-          code: "DARE_BAD_INPUT",
-          hint: `Reduce the number of ${kind} references.`,
-        });
+        bad(`${spec.name} accepts at most ${max} ${kind} reference(s); ${used} given.`, `Reduce the number of ${kind} references.`);
       }
     }
-    if (spec.combinedSecondsPerKind && refs.videoSeconds > spec.combinedSecondsPerKind) {
-      throw new DareError(
-        `${spec.name} accepts at most ${spec.combinedSecondsPerKind}s of combined video reference; ${refs.videoSeconds}s given.`,
-        { code: "DARE_BAD_INPUT", hint: "Trim or drop a reference clip." },
+    if (spec.audioRequiresVisual && refs.countsByKind.audio > 0 && refs.countsByKind.image + refs.countsByKind.video === 0) {
+      bad(`${spec.name} needs an image or video reference alongside an audio reference.`, "Attach a visual reference too.");
+    }
+    if (spec.referenceClipSeconds) {
+      const { min, max } = spec.referenceClipSeconds;
+      const outOfRange = refs.clipSeconds.filter(
+        (c) => c.kind !== "image" && c.seconds !== null && (c.seconds < min || c.seconds > max),
       );
-    }
-
-    // Only a *video* reference drives duration and aspect ratio automatically.
-    const autoFromVideo = spec.autoDurationWithVideoReference && refs.countsByKind.video > 0;
-
-    let durationSeconds = args.durationSeconds ?? spec.defaults.durationSeconds;
-    if (!autoFromVideo && durationSeconds !== undefined && !spec.durationsSeconds.includes(durationSeconds)) {
-      throw new DareError(`${spec.name} does not support a ${durationSeconds}s duration.`, {
-        code: "DARE_BAD_INPUT",
-        hint: `Supported durations (seconds): ${spec.durationsSeconds.join(", ")}.`,
-      });
-    }
-    if (autoFromVideo) {
-      if (args.durationSeconds !== undefined || args.aspectRatio !== undefined) {
-        notes.push(
-          `A video reference is attached, so ${spec.name} derives duration and aspect ratio from it; the values you passed were ignored.`,
+      if (outOfRange.length > 0) {
+        bad(
+          `${spec.name} reference clips must be ${min}–${max}s long; ${outOfRange.map((c) => `${c.key} is ${c.seconds}s`).join(", ")}.`,
+          "Trim the clip or choose a different reference.",
         );
       }
-      durationSeconds = undefined;
+    }
+    if (spec.combinedSecondsPerKind) {
+      if (refs.knownVideoSeconds > spec.combinedSecondsPerKind) {
+        bad(
+          `${spec.name} accepts at most ${spec.combinedSecondsPerKind}s of combined video reference; ${refs.knownVideoSeconds}s given.`,
+          "Trim or drop a reference clip.",
+        );
+      }
+      if (refs.knownAudioSeconds > spec.combinedSecondsPerKind) {
+        bad(
+          `${spec.name} accepts at most ${spec.combinedSecondsPerKind}s of combined audio reference; ${refs.knownAudioSeconds}s given.`,
+          "Trim or drop an audio reference.",
+        );
+      }
     }
 
+    /* ---- per-model options, only where the model declares them ---- */
+    const autoFromVideo = spec.autoDurationWithVideoReference && refs.countsByKind.video > 0;
+
+    let quality: string | undefined;
+    if (spec.qualities) {
+      quality = args.quality ?? spec.defaults.quality;
+      if (!quality || !spec.qualities.includes(quality)) {
+        bad(`${spec.name} does not support quality "${quality}".`, `Supported qualities: ${spec.qualities.join(", ")}.`);
+      }
+    } else if (args.quality !== undefined) {
+      notes.push(`${spec.name} has no quality setting; "${args.quality}" was ignored.`);
+    }
+
+    let aspectRatio: string | undefined;
+    if (spec.aspectRatios) {
+      aspectRatio = args.aspectRatio ?? spec.defaults.aspectRatio;
+      if (!aspectRatio || !spec.aspectRatios.includes(aspectRatio)) {
+        bad(`${spec.name} does not support aspect ratio "${aspectRatio}".`, `Supported aspect ratios: ${spec.aspectRatios.join(", ")}.`);
+      }
+    } else if (args.aspectRatio !== undefined) {
+      notes.push(`${spec.name} has no aspect ratio setting; "${args.aspectRatio}" was ignored.`);
+    }
+
+    let durationSeconds: number | undefined;
+    if (spec.durationsSeconds) {
+      const allowed = references.length > 0 && spec.durationsWithReference ? spec.durationsWithReference : spec.durationsSeconds;
+      durationSeconds = args.durationSeconds ?? (allowed.includes(spec.defaults.durationSeconds ?? -1) ? spec.defaults.durationSeconds : allowed[0]);
+      if (durationSeconds === undefined || !allowed.includes(durationSeconds)) {
+        bad(
+          `${spec.name} does not support a ${durationSeconds}s duration${references.length > 0 && spec.durationsWithReference ? " with a reference attached" : ""}.`,
+          `Supported durations (seconds): ${allowed.join(", ")}.`,
+        );
+      }
+    } else if (args.durationSeconds !== undefined) {
+      notes.push(`${spec.name} has a fixed length; duration ${args.durationSeconds}s was ignored.`);
+    }
+
+    if (autoFromVideo) {
+      if (args.durationSeconds !== undefined || args.aspectRatio !== undefined) {
+        notes.push(`A video reference is attached, so ${spec.name} derives duration and aspect ratio from it; the values you passed were ignored.`);
+      }
+      durationSeconds = undefined;
+      aspectRatio = "auto";
+    }
+
+    /* ---- cost ---- */
     const count = args.count ?? 1;
     const perRow = estimateVideoCredits({
       model: args.model,
       quality,
       durationSeconds,
       audioEnabled: args.audioEnabled ?? true,
-      referenceVideoSeconds: refs.videoSeconds,
+      referenceVideoSeconds: refs.pricedVideoSeconds,
       videoReferenceCount: refs.countsByKind.video,
     });
     const estimatedCredits = perRow * count;
     this.enforceCostGuard(estimatedCredits, "video generation");
 
+    /* ---- spec, shaped exactly as Dare's composer shapes it ---- */
     const generationSpec: Record<string, unknown> = {
       tool: "create_video",
       prompt: withMentions(args.prompt, references),
       model: args.model,
-      aspectRatio: autoFromVideo ? "auto" : aspectRatio,
-      quality,
     };
     if (spec.audioToggle) generationSpec.audioEnabled = args.audioEnabled ?? true;
-    if (durationSeconds !== undefined) generationSpec.duration = `${durationSeconds}s`;
     if (references.length > 0 || (args.webLinkIds?.length ?? 0) > 0) {
       generationSpec.context = { mediaStorageKeys: references, webLinkIds: args.webLinkIds ?? [] };
     }
+    if (aspectRatio !== undefined) generationSpec.aspectRatio = aspectRatio;
+    if (durationSeconds !== undefined) generationSpec.duration = `${durationSeconds}s`;
+    if (quality !== undefined) generationSpec.quality = quality;
 
+    if (args.dryRun) return { outcome: "dry_run", ids: [], estimatedCredits, notes, spec: generationSpec };
     const result = await this.rpc.call<CreateOutcome>("generations.create", this.createInput(generationSpec, count, args.projectId));
-
-    return { ...result, estimatedCredits, notes };
+    return { ...result, estimatedCredits, notes, spec: generationSpec };
   }
 
   async createImage(args: {
@@ -551,7 +693,8 @@ export class DareService {
     referenceStorageKeys?: string[];
     count?: number;
     projectId?: string;
-  }): Promise<CreateOutcome & { estimatedCredits: number; notes: string[] }> {
+    dryRun?: boolean;
+  }): Promise<CreateOutcome & { estimatedCredits: number; notes: string[]; spec: Record<string, unknown> }> {
     const spec = IMAGE_MODELS[args.model];
     if (!spec) {
       throw new DareError(`Unknown image model "${args.model}".`, {
@@ -559,26 +702,40 @@ export class DareService {
         hint: `Choose one of: ${Object.keys(IMAGE_MODELS).join(", ")}.`,
       });
     }
-    const quality = args.quality ?? spec.defaults.quality;
-    if (!spec.qualities.includes(quality)) {
-      throw new DareError(`${spec.name} does not support quality "${quality}".`, {
-        code: "DARE_BAD_INPUT",
-        hint: `Supported qualities: ${spec.qualities.join(", ")}.`,
-      });
+    const bad = (message: string, hint: string): never => {
+      throw new DareError(message, { code: "DARE_BAD_INPUT", hint });
+    };
+    const notes: string[] = [];
+
+    let quality: string | undefined;
+    if (spec.qualities) {
+      quality = args.quality ?? spec.defaults.quality;
+      if (!quality || !spec.qualities.includes(quality)) {
+        bad(`${spec.name} does not support quality "${quality}".`, `Supported qualities: ${spec.qualities.join(", ")}.`);
+      }
+    } else if (args.quality !== undefined) {
+      notes.push(`${spec.name} has no quality setting; "${args.quality}" was ignored.`);
     }
     const aspectRatio = args.aspectRatio ?? spec.defaults.aspectRatio;
     if (!spec.aspectRatios.includes(aspectRatio)) {
-      throw new DareError(`${spec.name} does not support aspect ratio "${aspectRatio}".`, {
-        code: "DARE_BAD_INPUT",
-        hint: `Supported aspect ratios: ${spec.aspectRatios.join(", ")}.`,
-      });
+      bad(`${spec.name} does not support aspect ratio "${aspectRatio}".`, `Supported aspect ratios: ${spec.aspectRatios.join(", ")}.`);
     }
+
     const references = args.referenceStorageKeys ?? [];
     if (references.length > spec.maxReferences.total) {
-      throw new DareError(`${spec.name} accepts at most ${spec.maxReferences.total} references; ${references.length} given.`, {
-        code: "DARE_BAD_INPUT",
-        hint: "Drop some references and retry.",
-      });
+      bad(`${spec.name} accepts at most ${spec.maxReferences.total} references; ${references.length} given.`, "Drop some references and retry.");
+    }
+    if (references.length > 0) {
+      const refs = await this.summariseReferences(references);
+      if (refs.unresolved.length > 0) {
+        throw new DareError(`Dare does not recognise ${refs.unresolved.length} reference storage key(s): ${refs.unresolved.join(", ")}.`, {
+          code: "DARE_REFERENCE_UNKNOWN",
+          hint: "Use storage keys returned by dare_upload_media or listed by dare_list_uploads.",
+        });
+      }
+      if (refs.countsByKind.video + refs.countsByKind.audio > 0) {
+        bad(`${spec.name} accepts image references only.`, "Drop the video/audio references.");
+      }
     }
 
     const count = args.count ?? 1;
@@ -589,16 +746,14 @@ export class DareService {
       tool: "create_image",
       prompt: withMentions(args.prompt, references),
       model: args.model,
-      aspectRatio,
-      quality,
     };
-    if (references.length > 0) {
-      generationSpec.context = { mediaStorageKeys: references, webLinkIds: [] };
-    }
+    if (references.length > 0) generationSpec.context = { mediaStorageKeys: references, webLinkIds: [] };
+    generationSpec.aspectRatio = aspectRatio;
+    if (quality !== undefined) generationSpec.quality = quality;
 
+    if (args.dryRun) return { outcome: "dry_run", ids: [], estimatedCredits, notes, spec: generationSpec };
     const result = await this.rpc.call<CreateOutcome>("generations.create", this.createInput(generationSpec, count, args.projectId));
-
-    return { ...result, estimatedCredits, notes: [] };
+    return { ...result, estimatedCredits, notes, spec: generationSpec };
   }
 
   async getGeneration(id: string): Promise<any> {

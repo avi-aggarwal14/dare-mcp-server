@@ -7,22 +7,37 @@
 
 export type MediaKind = "image" | "video" | "audio";
 
+/**
+ * Per-model constraints, mirrored from Dare's `workspace-catalog` bundle.
+ *
+ * Optional fields are optional for a reason: Dare's composer only puts a key in the
+ * request spec when the model's config declares it. Hailuo sends `{tool, prompt, model}`
+ * and nothing else; Kling has durations but no quality tier; GPT Image 2 has aspect
+ * ratios but no quality. `buildSpec` in dare.ts follows the same rule.
+ */
 export interface VideoModelSpec {
   id: string;
   name: string;
   description: string;
   tool: "create_video";
-  aspectRatios: string[];
-  durationsSeconds: number[];
-  qualities: string[];
+  aspectRatios?: string[];
+  durationsSeconds?: number[];
+  qualities?: string[];
+  /** Whether the spec carries an `audioEnabled` flag. */
   audioToggle: boolean;
   referenceKinds: MediaKind[];
   maxReferences: { total: number; perKind?: Partial<Record<MediaKind, number>> };
-  /** Combined seconds of reference media allowed per kind. */
+  /** Each reference clip must be within this length. */
+  referenceClipSeconds?: { min: number; max: number };
+  /** Combined seconds of reference media allowed per kind (video, audio). */
   combinedSecondsPerKind?: number;
-  /** When true, a video reference drives duration and aspect ratio automatically. */
+  /** An audio reference must be accompanied by an image or video reference. */
+  audioRequiresVisual?: boolean;
+  /** With any reference attached, only these durations are allowed. */
+  durationsWithReference?: number[];
+  /** A video reference drives duration and aspect ratio; both are omitted from the spec. */
   autoDurationWithVideoReference: boolean;
-  defaults: { aspectRatio: string; durationSeconds?: number; quality: string };
+  defaults: { aspectRatio?: string; durationSeconds?: number; quality?: string };
 }
 
 export interface ImageModelSpec {
@@ -31,26 +46,29 @@ export interface ImageModelSpec {
   description: string;
   tool: "create_image";
   aspectRatios: string[];
-  qualities: string[];
+  qualities?: string[];
   maxReferences: { total: number };
-  defaults: { aspectRatio: string; quality: string };
+  defaults: { aspectRatio: string; quality?: string };
 }
 
 const RANGE = (from: number, to: number): number[] =>
   Array.from({ length: to - from + 1 }, (_, i) => from + i);
 
+const SEEDANCE_RATIOS = ["auto", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"];
+
 export const VIDEO_MODELS: Record<string, VideoModelSpec> = {
   "seedance-2-5": {
     id: "seedance-2-5",
     name: "Seedance 2.5",
-    description: "ByteDance Seedance 2.5. Videos up to 30 seconds. Dare's default video model.",
+    description: "ByteDance Seedance 2.5. Up to 30 seconds. Dare's default video model.",
     tool: "create_video",
-    aspectRatios: ["auto", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+    aspectRatios: SEEDANCE_RATIOS,
     durationsSeconds: RANGE(4, 30),
     qualities: ["480p", "720p"],
     audioToggle: true,
     referenceKinds: ["image", "video", "audio"],
     maxReferences: { total: 50, perKind: { image: 30, video: 10, audio: 10 } },
+    referenceClipSeconds: { min: 2, max: 30 },
     combinedSecondsPerKind: 30,
     autoDurationWithVideoReference: true,
     defaults: { aspectRatio: "auto", durationSeconds: 8, quality: "720p" },
@@ -60,72 +78,73 @@ export const VIDEO_MODELS: Record<string, VideoModelSpec> = {
     name: "Seedance 2.0",
     description: "ByteDance Seedance 2.0. Up to 4K with synchronised audio, 15 seconds max.",
     tool: "create_video",
-    aspectRatios: ["auto", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+    aspectRatios: SEEDANCE_RATIOS,
     durationsSeconds: RANGE(4, 15),
     qualities: ["480p", "720p", "1080p", "4k"],
     audioToggle: true,
     referenceKinds: ["image", "video", "audio"],
     maxReferences: { total: 12, perKind: { image: 9, video: 3, audio: 3 } },
+    referenceClipSeconds: { min: 2, max: 15 },
     combinedSecondsPerKind: 15,
-    autoDurationWithVideoReference: true,
+    audioRequiresVisual: true,
+    autoDurationWithVideoReference: false,
     defaults: { aspectRatio: "auto", durationSeconds: 8, quality: "1080p" },
   },
   "seedance-2-fast": {
     id: "seedance-2-fast",
     name: "Seedance 2.0 Fast",
-    description: "Faster, cheaper Seedance 2.0. 480p and 720p only.",
+    description: "Faster, cheaper Seedance 2.0. 480p and 720p only, 15 seconds max.",
     tool: "create_video",
-    aspectRatios: ["auto", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+    aspectRatios: SEEDANCE_RATIOS,
     durationsSeconds: RANGE(4, 15),
     qualities: ["480p", "720p"],
     audioToggle: true,
     referenceKinds: ["image", "video", "audio"],
     maxReferences: { total: 12, perKind: { image: 9, video: 3, audio: 3 } },
+    referenceClipSeconds: { min: 2, max: 15 },
     combinedSecondsPerKind: 15,
-    autoDurationWithVideoReference: true,
+    audioRequiresVisual: true,
+    autoDurationWithVideoReference: false,
     defaults: { aspectRatio: "auto", durationSeconds: 8, quality: "720p" },
   },
   "veo-3-1": {
     id: "veo-3-1",
     name: "Veo 3.1",
-    description: "Google Veo 3.1.",
+    description: "Google Veo 3.1. 4, 6 or 8 seconds; fixed at 8 seconds when a reference image is attached.",
     tool: "create_video",
-    aspectRatios: ["auto", "16:9", "9:16"],
+    aspectRatios: ["16:9", "9:16"],
     durationsSeconds: [4, 6, 8],
-    qualities: ["1080p", "4k"],
+    qualities: ["720p", "1080p", "4k"],
     audioToggle: true,
     referenceKinds: ["image"],
-    maxReferences: { total: 3, perKind: { image: 3 } },
+    maxReferences: { total: 3 },
+    durationsWithReference: [8],
     autoDurationWithVideoReference: false,
-    defaults: { aspectRatio: "auto", durationSeconds: 8, quality: "1080p" },
+    defaults: { aspectRatio: "16:9", durationSeconds: 8, quality: "1080p" },
   },
   "kling-3": {
     id: "kling-3",
     name: "Kling 3.0 Pro",
-    description: "Kuaishou Kling 3.0 Pro.",
+    description: "Kuaishou Kling 3.0 Pro. 3–15 seconds, no quality tiers, no reference media.",
     tool: "create_video",
-    aspectRatios: ["auto", "16:9", "1:1", "9:16"],
-    durationsSeconds: [5, 10],
-    qualities: ["1080p"],
+    aspectRatios: ["16:9", "9:16", "1:1"],
+    durationsSeconds: RANGE(3, 15),
     audioToggle: true,
-    referenceKinds: ["image"],
-    maxReferences: { total: 4, perKind: { image: 4 } },
+    referenceKinds: [],
+    maxReferences: { total: 0 },
     autoDurationWithVideoReference: false,
-    defaults: { aspectRatio: "auto", durationSeconds: 5, quality: "1080p" },
+    defaults: { aspectRatio: "16:9", durationSeconds: 5 },
   },
   "hailuo-2-3": {
     id: "hailuo-2-3",
     name: "Hailuo 2.3 Pro",
-    description: "MiniMax Hailuo 2.3 Pro. Fixed-length clip, flat credit cost.",
+    description: "MiniMax Hailuo 2.3 Pro. Prompt only: no duration, ratio, quality or reference options. Flat price.",
     tool: "create_video",
-    aspectRatios: ["auto", "16:9", "9:16"],
-    durationsSeconds: [6],
-    qualities: ["1080p"],
     audioToggle: false,
-    referenceKinds: ["image"],
-    maxReferences: { total: 2, perKind: { image: 2 } },
+    referenceKinds: [],
+    maxReferences: { total: 0 },
     autoDurationWithVideoReference: false,
-    defaults: { aspectRatio: "auto", durationSeconds: 6, quality: "1080p" },
+    defaults: {},
   },
 };
 
@@ -135,7 +154,7 @@ export const IMAGE_MODELS: Record<string, ImageModelSpec> = {
     name: "Nano Banana 2",
     description: "Google image model. Quality tiers 1k / 2k / 4k.",
     tool: "create_image",
-    aspectRatios: ["auto", "21:9", "16:9", "4:3", "3:2", "1:1", "2:3", "3:4", "9:16"],
+    aspectRatios: ["auto", "21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"],
     qualities: ["1k", "2k", "4k"],
     maxReferences: { total: 14 },
     defaults: { aspectRatio: "auto", quality: "2k" },
@@ -143,19 +162,18 @@ export const IMAGE_MODELS: Record<string, ImageModelSpec> = {
   "gpt-image-2": {
     id: "gpt-image-2",
     name: "GPT Image 2",
-    description: "OpenAI image model. Cost varies by aspect ratio plus per-reference surcharge.",
+    description: "OpenAI image model. No quality tiers; cost varies by aspect ratio plus a per-reference surcharge.",
     tool: "create_image",
-    aspectRatios: ["1:1", "3:2", "2:3"],
-    qualities: ["auto"],
+    aspectRatios: ["auto", "1:1", "3:2", "2:3"],
     maxReferences: { total: 16 },
-    defaults: { aspectRatio: "1:1", quality: "auto" },
+    defaults: { aspectRatio: "auto" },
   },
   "seedream-5-pro": {
     id: "seedream-5-pro",
     name: "Seedream 5 Pro",
     description: "ByteDance Seedream 5 Pro. Quality tiers 1k / 2k.",
     tool: "create_image",
-    aspectRatios: ["auto", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+    aspectRatios: ["auto", "16:9", "3:2", "4:3", "1:1", "3:4", "2:3", "9:16"],
     qualities: ["1k", "2k"],
     maxReferences: { total: 10 },
     defaults: { aspectRatio: "auto", quality: "2k" },
@@ -210,7 +228,7 @@ const maxRate = (table: Record<string, number>): number => Math.max(...Object.va
 
 export interface VideoCostInput {
   model: string;
-  quality: string;
+  quality?: string;
   durationSeconds?: number;
   audioEnabled?: boolean;
   /** Total seconds of video references attached, if any. */
@@ -236,11 +254,11 @@ export function videoCostDollars(input: VideoCostInput): number {
     case "seedance-2":
     case "seedance-2-fast": {
       const table = model === "seedance-2" ? SEEDANCE_2_RATES : SEEDANCE_2_FAST_RATES;
-      const rate = table[quality] ?? maxRate(table);
+      const rate = (quality !== undefined ? table[quality] : undefined) ?? maxRate(table);
       return rate * (durationSeconds ?? 8) * discount;
     }
     case "seedance-2-5": {
-      const rate = SEEDANCE_2_5_RATES[quality] ?? maxRate(SEEDANCE_2_5_RATES);
+      const rate = (quality !== undefined ? SEEDANCE_2_5_RATES[quality] : undefined) ?? maxRate(SEEDANCE_2_5_RATES);
       const refSeconds = Math.min(referenceVideoSeconds, 30);
       const base = durationSeconds ?? refSeconds;
       return rate * (base + refSeconds) * discount;
@@ -265,15 +283,15 @@ export function estimateVideoCredits(input: VideoCostInput): number {
 }
 
 /** Provider cost in dollars for one image row, before Dare's markup. */
-export function imageCostDollars(model: string, quality: string, aspectRatio: string, referenceCount = 0): number {
+export function imageCostDollars(model: string, quality: string | undefined, aspectRatio: string, referenceCount = 0): number {
   switch (model) {
     case "nano-banana-2":
-      return NANO_BANANA_RATES[quality] ?? maxRate(NANO_BANANA_RATES);
+      return (quality !== undefined ? NANO_BANANA_RATES[quality] : undefined) ?? maxRate(NANO_BANANA_RATES);
     case "gpt-image-2":
       return (IMAGE_GPT_ASPECT_RATES[aspectRatio] ?? IMAGE_GPT_ASPECT_RATES["1:1"]!) +
         IMAGE_GPT_PER_REFERENCE * referenceCount;
     case "seedream-5-pro":
-      return (SEEDREAM_RATES[quality] ?? maxRate(SEEDREAM_RATES)) +
+      return ((quality !== undefined ? SEEDREAM_RATES[quality] : undefined) ?? maxRate(SEEDREAM_RATES)) +
         SEEDREAM_PER_EXTRA_REFERENCE * Math.max(0, referenceCount - 1);
     default:
       return Number.NaN;
@@ -284,6 +302,6 @@ export const VIDEO_MODEL_IDS = Object.keys(VIDEO_MODELS);
 export const IMAGE_MODEL_IDS = Object.keys(IMAGE_MODELS);
 
 /** Credits Dare will charge for one image row. */
-export function estimateImageCredits(model: string, quality: string, aspectRatio: string, referenceCount = 0): number {
+export function estimateImageCredits(model: string, quality: string | undefined, aspectRatio: string, referenceCount = 0): number {
   return dollarsToCredits(imageCostDollars(model, quality, aspectRatio, referenceCount));
 }

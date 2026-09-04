@@ -41,8 +41,8 @@ function fail(err: unknown): ToolResult {
   return { content: [{ type: "text", text: message }], isError: true };
 }
 
-async function guard<T extends Record<string, unknown>>(
-  fn: () => Promise<{ structured: T; summary?: string }>,
+async function guard(
+  fn: () => Promise<{ structured: Record<string, unknown>; summary?: string }>,
 ): Promise<ToolResult> {
   try {
     const { structured, summary } = await fn();
@@ -124,8 +124,8 @@ export function createServer(config: DareConfig = loadConfig()): McpServer {
       title: "List Dare models",
       description:
         "List the video and image models available on Dare with their supported durations, aspect ratios, " +
-        "quality tiers, reference limits and per-second credit rates. Call this before generating so parameters " +
-        "are valid for the chosen model. Makes no network request and spends no credits.",
+        "quality tiers and reference limits. Call this before generating so parameters are valid for the chosen " +
+        "model, and dare_estimate_cost for prices. Makes no network request and spends no credits.",
       inputSchema: {
         kind: z.enum(["video", "image", "all"]).default("all").describe("Which model family to list."),
         response_format: responseFormat,
@@ -144,10 +144,11 @@ export function createServer(config: DareConfig = loadConfig()): McpServer {
           for (const m of video) {
             lines.push(
               `- **${m.name}** (\`${m.id}\`) — ${m.description}`,
-              `  - durations: ${formatDurations(m.durationsSeconds)}`,
-              `  - qualities: ${m.qualities.join(", ")} | aspect ratios: ${m.aspectRatios.join(", ")}`,
-              `  - references: up to ${m.maxReferences.total} (${m.referenceKinds.join(", ")})`,
-              `  - defaults: ${m.defaults.durationSeconds ?? "auto"}s @ ${m.defaults.quality}, ${m.defaults.aspectRatio}`,
+              `  - durations: ${m.durationsSeconds ? formatDurations(m.durationsSeconds) : "fixed by the model"}` +
+                (m.durationsWithReference ? ` (${m.durationsWithReference.join("/")}s when a reference is attached)` : ""),
+              `  - qualities: ${m.qualities?.join(", ") ?? "none"} | aspect ratios: ${m.aspectRatios?.join(", ") ?? "none"}`,
+              `  - references: ${m.maxReferences.total === 0 ? "not supported" : `up to ${m.maxReferences.total} (${m.referenceKinds.join(", ")})`}`,
+              `  - defaults: ${[m.defaults.durationSeconds && `${m.defaults.durationSeconds}s`, m.defaults.quality, m.defaults.aspectRatio].filter(Boolean).join(", ") || "none"}`,
             );
           }
         }
@@ -156,7 +157,7 @@ export function createServer(config: DareConfig = loadConfig()): McpServer {
           for (const m of image) {
             lines.push(
               `- **${m.name}** (\`${m.id}\`) — ${m.description}`,
-              `  - qualities: ${m.qualities.join(", ")} | aspect ratios: ${m.aspectRatios.join(", ")}`,
+              `  - qualities: ${m.qualities?.join(", ") ?? "none"} | aspect ratios: ${m.aspectRatios.join(", ")} | references: up to ${m.maxReferences.total}`,
             );
           }
         }
@@ -205,16 +206,17 @@ export function createServer(config: DareConfig = loadConfig()): McpServer {
           });
         }
         const quality = args.quality ?? spec.defaults.quality;
-        const aspectRatio = args.aspect_ratio ?? spec.defaults.aspectRatio;
-        // Mirror the generation path exactly: a video reference makes the model derive
+        const aspectRatio = args.aspect_ratio ?? spec.defaults.aspectRatio ?? "auto";
+        // Mirror the generation path exactly: a video reference makes Seedance 2.5 derive
         // its own duration, so a passed duration is ignored there and must be here too.
         const videoSpec = args.kind === "video" ? (spec as (typeof VIDEO_MODELS)[string]) : null;
-        const autoFromVideo = Boolean(
-          videoSpec?.autoDurationWithVideoReference && args.reference_video_seconds > 0,
-        );
+        const hasVideoRef = args.video_reference_count > 0 || args.reference_video_seconds > 0;
+        const autoFromVideo = Boolean(videoSpec?.autoDurationWithVideoReference && hasVideoRef);
         const effectiveDuration = autoFromVideo
           ? undefined
-          : (args.duration_seconds ?? videoSpec?.defaults.durationSeconds);
+          : videoSpec?.durationsSeconds
+            ? (args.duration_seconds ?? videoSpec.defaults.durationSeconds)
+            : undefined;
 
         const perRow =
           args.kind === "video"
@@ -224,7 +226,7 @@ export function createServer(config: DareConfig = loadConfig()): McpServer {
                 durationSeconds: effectiveDuration,
                 audioEnabled: args.audio_enabled,
                 referenceVideoSeconds: args.reference_video_seconds,
-                videoReferenceCount: Math.max(args.video_reference_count, args.reference_video_seconds > 0 ? 1 : 0),
+                videoReferenceCount: hasVideoRef ? Math.max(1, args.video_reference_count) : 0,
               })
             : estimateImageCredits(args.model, quality, aspectRatio, args.reference_count);
 
@@ -317,6 +319,10 @@ export function createServer(config: DareConfig = loadConfig()): McpServer {
           .max(900)
           .default(0)
           .describe("Block up to this many seconds waiting for the result. 0 returns immediately."),
+        dry_run: z
+          .boolean()
+          .default(false)
+          .describe("Validate the request, resolve references and price it, but do not submit. Spends nothing. Returns the exact spec that would be sent."),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
@@ -332,7 +338,15 @@ export function createServer(config: DareConfig = loadConfig()): McpServer {
           referenceStorageKeys: args.reference_storage_keys,
           count: args.count,
           projectId: args.project_id,
+          dryRun: args.dry_run,
         });
+        if (args.dry_run) {
+          const structured = { dry_run: true, estimated_credits: result.estimatedCredits, spec: result.spec, notes: result.notes };
+          return {
+            structured,
+            summary: [`Dry run — nothing submitted. Would cost **${result.estimatedCredits} credits**.`, ...result.notes, "```json", JSON.stringify(result.spec, null, 2), "```"].join("\n"),
+          };
+        }
 
         if (result.outcome === "insufficient_credits") {
           throw new DareError(
@@ -345,6 +359,12 @@ export function createServer(config: DareConfig = loadConfig()): McpServer {
         }
 
         const ids = result.ids ?? [];
+        if (ids.length === 0) {
+          throw new DareError(`Dare accepted the request but returned no generation ids (outcome: ${result.outcome ?? "unknown"}).`, {
+            code: "DARE_UNEXPECTED_OUTCOME",
+            hint: "Check dare_list_generations to see whether a job was created, then retry once if not.",
+          });
+        }
         const waited = await settleWait(dare, ids[0], args.wait_seconds, 10_000);
 
         const structured = {
@@ -387,6 +407,7 @@ export function createServer(config: DareConfig = loadConfig()): McpServer {
         count: z.number().int().min(1).max(10).default(1).describe("Number of variations."),
         project_id: z.string().optional().describe("Optional Dare project id."),
         wait_seconds: z.number().int().min(0).max(600).default(0).describe("Block up to this long for the result."),
+        dry_run: z.boolean().default(false).describe("Validate and price without submitting. Spends nothing."),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
@@ -400,7 +421,15 @@ export function createServer(config: DareConfig = loadConfig()): McpServer {
           referenceStorageKeys: args.reference_storage_keys,
           count: args.count,
           projectId: args.project_id,
+          dryRun: args.dry_run,
         });
+        if (args.dry_run) {
+          const structured = { dry_run: true, estimated_credits: result.estimatedCredits, spec: result.spec, notes: result.notes };
+          return {
+            structured,
+            summary: [`Dry run — nothing submitted. Would cost **${result.estimatedCredits} credits**.`, ...result.notes, "```json", JSON.stringify(result.spec, null, 2), "```"].join("\n"),
+          };
+        }
         if (result.outcome === "insufficient_credits") {
           throw new DareError(
             `Not enough Dare credits: ${result.requiredCredits} needed, ${result.creditBalance} available.`,
@@ -408,6 +437,12 @@ export function createServer(config: DareConfig = loadConfig()): McpServer {
           );
         }
         const ids = result.ids ?? [];
+        if (ids.length === 0) {
+          throw new DareError(`Dare accepted the request but returned no generation ids (outcome: ${result.outcome ?? "unknown"}).`, {
+            code: "DARE_UNEXPECTED_OUTCOME",
+            hint: "Check dare_list_generations to see whether a job was created, then retry once if not.",
+          });
+        }
         const waited = await settleWait(dare, ids[0], args.wait_seconds, 3_000);
         const structured = {
           generation_ids: ids,
@@ -466,7 +501,7 @@ export function createServer(config: DareConfig = loadConfig()): McpServer {
         const url = outputUrlOf(generation);
         const progress =
           generation?.stage || generation?.stageProgress != null
-            ? `${generation.stage ?? "working"}${generation.stageProgress != null ? ` ${Math.round(generation.stageProgress * 100)}%` : ""}`
+            ? `${generation.stage ?? "working"}${generation.stageProgress != null ? ` ${Math.round(generation.stageProgress)}%` : ""}`
             : null;
         const createdAt = generation?.createdAt ? new Date(generation.createdAt).getTime() : NaN;
         const elapsed = Number.isFinite(createdAt) ? Math.round((Date.now() - createdAt) / 1000) : null;

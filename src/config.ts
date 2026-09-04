@@ -12,7 +12,11 @@ export interface DareConfig {
   webUrl: string;
   clerkApiVersion: string;
   clerkJsVersion: string;
-  /** Hard ceiling on credits a single generation call may cost. 0 disables the guard. */
+  /**
+   * Hard ceiling on credits a single generation call may cost. Defaults to 500, which
+   * admits any single Seedance 2.5 clip (max 320) while blocking runaway batches.
+   * Set to 0 to disable.
+   */
   maxCreditsPerCall: number;
   requestTimeoutMs: number;
   /**
@@ -56,7 +60,7 @@ export function loadConfig(overrides: Partial<DareConfig> = {}): DareConfig {
     webUrl: (process.env.DARE_WEB_URL || "https://trydare.com").replace(/\/+$/, ""),
     clerkApiVersion: process.env.DARE_CLERK_API_VERSION || "2025-04-10",
     clerkJsVersion: process.env.DARE_CLERK_JS_VERSION || "5.99.0",
-    maxCreditsPerCall: num("DARE_MAX_CREDITS_PER_CALL", 0),
+    maxCreditsPerCall: num("DARE_MAX_CREDITS_PER_CALL", 500),
     requestTimeoutMs: num("DARE_REQUEST_TIMEOUT_MS", 120_000),
     uploadRoots: list("DARE_UPLOAD_ROOTS"),
     allowUrlUploads: bool("DARE_ALLOW_URL_UPLOADS", true),

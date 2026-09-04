@@ -23,8 +23,11 @@ production JS bundles. That has two consequences worth holding onto:
 | Clerk token minting | verified live |
 | `generations.create` | verified live (`outcome: "created"`, id returned, job ran) |
 | Every read procedure | verified live; response shapes documented in README |
+| Upload flow (`storage.generateUploadUrl` -> PUT -> `uploads.create`), `uploads.delete` | verified live |
+| Per-model spec shapes | dry-run for every model, compared against Dare's composer |
 
-Everything in the request path has now been exercised against Dare's real servers.
+Everything in the request path has been exercised against Dare's real servers, with one
+exception: `generations.cancel` (input `{ id }`, same as get/delete, which both work).
 
 ## How the contract was derived
 
@@ -42,7 +45,9 @@ The files that matter:
   (`tool`, `kind`, `model`, `prompt`, `pendingPrompt`, `rowCount`) feeds PostHog analytics and
   the optimistic library placeholder and is never sent. Getting this wrong was the original bug.
 - `workspace-catalog-*.js` — per-model constraints: durations, aspect ratios, qualities,
-  reference limits. Mirrored in `src/catalog.ts`.
+  reference limits, and crucially *which keys each model's spec carries*. Mirrored field-for-field
+  in `src/catalog.ts`; `createVideo` only emits a key when the model declares it. When Dare adds a
+  model, copy its config block verbatim rather than guessing.
 - `src-1-*.js` — the credit cost calculator. Also mirrored in `src/catalog.ts`. The rate tables
   in it are **dollars** of provider cost; the `l()` wrapper (`x1.5 / (49.99/750)`, rounded up)
   is what turns them into credits. Missing that wrapper understated every price by ~23x.

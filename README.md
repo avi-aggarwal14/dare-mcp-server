@@ -6,8 +6,9 @@ Kling 3.0 Pro and Hailuo 2.3 — billed to your existing Dare credit balance.
 
 > **Heads up.** Dare does not publish a developer API. This server talks to the same private
 > oRPC endpoint (`api.trydare.com/rpc`) the Dare web app uses, authenticating as you with a
-> Clerk session. It works today, but Dare can change that contract without notice, and using it
-> may sit outside Dare's terms of service. Your account, your credits, your call.
+> Clerk session. It works today — every tool has been exercised against Dare's live servers,
+> including a generation run to completion — but Dare can change that contract without notice,
+> and using it may sit outside Dare's terms of service. Your account, your credits, your call.
 
 ## Tools
 
@@ -16,8 +17,8 @@ Kling 3.0 Pro and Hailuo 2.3 — billed to your existing Dare credit balance.
 | `dare_list_models` | no | Models with durations, qualities, aspect ratios, reference limits |
 | `dare_estimate_cost` | no | Local credit estimate before you commit |
 | `dare_get_credit_balance` | no | Current balance |
-| `dare_generate_video` | **yes** | Text-to-video, Seedance 2.5 by default; optional reference media |
-| `dare_generate_image` | **yes** | Stills via Nano Banana 2, GPT Image 2, Seedream 5 Pro |
+| `dare_generate_video` | **yes** | Text-to-video, Seedance 2.5 by default; optional reference media. `dry_run: true` previews the spec and price for free |
+| `dare_generate_image` | **yes** | Stills via Nano Banana 2, GPT Image 2, Seedream 5 Pro. Supports `dry_run` |
 | `dare_get_generation` | no | Poll status, get the output URL |
 | `dare_list_generations` | no | Paginated library listing |
 | `dare_cancel_generation` | no | Stop an in-flight job |
@@ -67,7 +68,7 @@ You should see a minted token and your credit balance.
 claude mcp add dare \
   --scope user \
   --env DARE_CLIENT_TOKEN='eyJ...' \
-  --env DARE_MAX_CREDITS_PER_CALL=50 \
+  --env DARE_MAX_CREDITS_PER_CALL=500 \
   --env DARE_UPLOAD_ROOTS="$HOME/Movies,$HOME/Pictures" \
   -- node /absolute/path/to/dare-mcp-server/dist/stdio.js
 ```
@@ -111,7 +112,7 @@ alongside your files — generate a clip and have it written straight into a con
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `DARE_CLIENT_TOKEN` | — | **Required.** The `__client` cookie from `clerk.trydare.com`. |
-| `DARE_MAX_CREDITS_PER_CALL` | `0` (off) | Refuse any single generation estimated above this many credits. |
+| `DARE_MAX_CREDITS_PER_CALL` | `500` | Refuse any single generation estimated above this many credits. `0` disables. |
 | `DARE_UPLOAD_ROOTS` | — (blocked) | Comma-separated directories `dare_upload_media` may read local files from. Empty means local file reads are refused. |
 | `DARE_ALLOW_URL_UPLOADS` | `true` | Allow uploading from a public URL. Private and link-local addresses are always refused. |
 | `DARE_MAX_UPLOAD_BYTES` | `536870912` | Largest upload accepted. |
@@ -121,9 +122,9 @@ alongside your files — generate a clip and have it written straight into a con
 | `DARE_SERVER_URL` | `https://api.trydare.com` | Dare RPC base. |
 | `DARE_CLERK_FAPI_URL` | `https://clerk.trydare.com` | Clerk Frontend API base. |
 
-`DARE_MAX_CREDITS_PER_CALL` is worth setting. It is a client-side circuit breaker against a
-model talking itself into a 10-variation 30-second batch (3,200 credits). 500 allows any single
-Seedance 2.5 clip while blocking runaway batches. The guard fails closed: if a
+`DARE_MAX_CREDITS_PER_CALL` is a client-side circuit breaker against a model talking itself
+into a 10-variation 30-second batch (3,200 credits). The default of 500 allows any single
+Seedance 2.5 clip while blocking runaway batches; raise it deliberately when you want a batch. The guard fails closed: if a
 reference clip's duration cannot be read, the generation is refused rather than submitted on
 a guessed estimate.
 
@@ -172,8 +173,11 @@ Always sanity-check with `dare_estimate_cost` before a batch.
    }
 ```
 
-Seedance 2.5 takes up to 50 references (30 image, 10 video, 10 audio), 30 combined seconds per
-kind. With a video reference attached it derives duration and aspect ratio automatically.
+Seedance 2.5 takes up to 50 references (30 image, 10 video, 10 audio), each clip 2–30s, 30
+combined seconds per kind. With a video reference attached it derives duration and aspect ratio
+automatically. Seedance 2.0 models take 12 (9/3/3), 15s combined, and need a visual reference
+alongside any audio one. Veo 3.1 takes up to 3 images and is then fixed at 8 seconds. Kling and
+Hailuo take no references at all.
 
 ## Remote HTTP (optional)
 
@@ -244,11 +248,19 @@ Uploads are three steps: `storage.generateUploadUrl` -> `PUT` to signed storage 
 | `libraryItems.list`, `uploads.list` | `{ cursor, limit }` |
 | `storage.generateUploadUrl` | `{ contentType, fileExtension }` |
 | `uploads.create` | `{ storageKey, name, prompt, projectId, timezone }` |
-| `uploads.delete` | `{ id }` |
+| `uploads.get` / `uploads.delete` | `{ id }` |
 | `credits.getBalance`, `projects.list` | no input |
 
-`spec` for a video is `{ tool: "create_video", prompt, model, aspectRatio, quality, duration?, audioEnabled?, context? }`,
-where `duration` is a string like `"8s"` and `context` is `{ mediaStorageKeys, webLinkIds }`.
+`spec` carries only the keys the chosen model declares, exactly as Dare's composer builds it:
+Seedance models send `{ tool, prompt, model, audioEnabled, aspectRatio, duration, quality, context? }`,
+Kling omits `quality`, Hailuo sends `{ tool, prompt, model }` and nothing else, GPT Image 2 has no
+`quality`. `duration` is a string like `"8s"`, `context` is `{ mediaStorageKeys, webLinkIds }`, and
+every attached asset is also referenced in the prompt as `@<storageKey>`. Use `dry_run: true` on
+either generate tool to see the spec for any combination without submitting.
+
+Errors are mapped so an agent can act on them: a missing record is `DARE_NOT_FOUND`, a renamed
+procedure `DARE_UNKNOWN_PROCEDURE`, a schema mismatch `DARE_BAD_REQUEST` with the field-level
+issues included.
 
 Generation statuses seen in the wild: `queued` and `processing` while running, `succeeded`
 or `failed` at the end. The finished file is at `generation.outputAsset.storageUrl`. Anything
