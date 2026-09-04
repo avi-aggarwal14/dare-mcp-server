@@ -1,13 +1,15 @@
 import { extname, resolve, sep } from "node:path";
 import { readFile } from "node:fs/promises";
 import { lookup as dnsLookup } from "node:dns/promises";
+import { randomUUID } from "node:crypto";
 import type { DareConfig } from "./config.js";
 import type { DareRpcClient } from "./rpc.js";
 import { DareError } from "./errors.js";
 import { IMAGE_MODELS, VIDEO_MODELS, estimateImageCredits, estimateVideoCredits, type MediaKind } from "./catalog.js";
 
 export interface CreateOutcome {
-  outcome?: "insufficient_credits" | string;
+  /** "created" on success; "insufficient_credits" when the balance is too low. */
+  outcome?: "created" | "insufficient_credits" | string;
   ids?: string[];
   requiredCredits?: number;
   creditBalance?: number;
@@ -102,7 +104,7 @@ export class DareService {
   /* ---------------- account ---------------- */
 
   async getCreditBalance(): Promise<unknown> {
-    return this.rpc.call("credits.getBalance", {});
+    return this.rpc.call("credits.getBalance");
   }
 
   async getMediaInfo(storageKey: string): Promise<any> {
@@ -390,6 +392,23 @@ export class DareService {
     }
   }
 
+  /**
+   * Builds the `generations.create` input.
+   *
+   * Dare's web client sends exactly these fields. The tool/model/prompt/rowCount values
+   * it computes alongside them feed analytics and the optimistic UI only, and are never
+   * transmitted — sending them here would just be rejected as unknown keys.
+   */
+  private createInput(spec: Record<string, unknown>, count: number, projectId?: string): Record<string, unknown> {
+    return {
+      spec,
+      count,
+      ...(projectId ? { projectId } : {}),
+      metaEventId: `attempt_${randomUUID()}`,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    };
+  }
+
   async createVideo(args: {
     prompt: string;
     model: string;
@@ -508,16 +527,7 @@ export class DareService {
       generationSpec.context = { mediaStorageKeys: references, webLinkIds: args.webLinkIds ?? [] };
     }
 
-    const result = await this.rpc.call<CreateOutcome>("generations.create", {
-      tool: "create_video",
-      kind: "video",
-      model: args.model,
-      prompt: args.prompt,
-      pendingPrompt: args.prompt.replace(/@\S+/gu, "").replace(/[^\S\n]{2,}/gu, " ").trim() || null,
-      rowCount: count,
-      spec: generationSpec,
-      ...(args.projectId ? { projectId: args.projectId } : {}),
-    });
+    const result = await this.rpc.call<CreateOutcome>("generations.create", this.createInput(generationSpec, count, args.projectId));
 
     return { ...result, estimatedCredits, notes };
   }
@@ -575,16 +585,7 @@ export class DareService {
       generationSpec.context = { mediaStorageKeys: references, webLinkIds: [] };
     }
 
-    const result = await this.rpc.call<CreateOutcome>("generations.create", {
-      tool: "create_image",
-      kind: "image",
-      model: args.model,
-      prompt: args.prompt,
-      pendingPrompt: args.prompt.replace(/@\S+/gu, "").replace(/[^\S\n]{2,}/gu, " ").trim() || null,
-      rowCount: count,
-      spec: generationSpec,
-      ...(args.projectId ? { projectId: args.projectId } : {}),
-    });
+    const result = await this.rpc.call<CreateOutcome>("generations.create", this.createInput(generationSpec, count, args.projectId));
 
     return { ...result, estimatedCredits, notes: [] };
   }
@@ -606,7 +607,7 @@ export class DareService {
   }
 
   async listProjects(): Promise<unknown> {
-    return this.rpc.call("projects.list", {});
+    return this.rpc.call("projects.list");
   }
 
   /** Reads the status out of whatever shape Dare returns. */

@@ -31,7 +31,11 @@ export class DareRpcClient {
     private readonly auth: ClerkTokenProvider,
   ) {}
 
-  async call<T = unknown>(procedure: string, input: unknown = {}, opts: { retryOnAuth?: boolean } = {}): Promise<T> {
+  /**
+   * `input` of `undefined` sends an argument-less call (body `{"meta":[]}`), matching what
+   * the Dare client does for procedures declared without an input schema.
+   */
+  async call<T = unknown>(procedure: string, input?: unknown, opts: { retryOnAuth?: boolean } = {}): Promise<T> {
     const mayRetry = (opts.retryOnAuth ?? true) && REPLAYABLE.has(procedure) && this.auth.canRefresh();
     const path = procedure.replace(/\./g, "/");
     const token = await this.auth.getToken();

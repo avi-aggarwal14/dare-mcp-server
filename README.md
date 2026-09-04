@@ -220,7 +220,28 @@ Claude Code / Cowork
     Dare backend
 ```
 
-Uploads are three steps: `storage.generateUploadUrl` → `PUT` to signed storage → `uploads.create`.
+Uploads are three steps: `storage.generateUploadUrl` -> `PUT` to signed storage -> `uploads.create`.
+
+### Procedures used
+
+| Procedure | Input |
+| --- | --- |
+| `generations.create` | `{ spec, count, projectId?, metaEventId, timezone }` |
+| `generations.get` / `cancel` / `delete` | `{ id }` |
+| `generations.getMediaInfo` | `{ storageKey }` |
+| `libraryItems.list`, `uploads.list` | `{ cursor, limit }` |
+| `storage.generateUploadUrl` | `{ contentType, fileExtension }` |
+| `uploads.create` | `{ storageKey, name, prompt, projectId, timezone }` |
+| `uploads.delete` | `{ id }` |
+| `credits.getBalance`, `projects.list` | no input |
+
+`spec` for a video is `{ tool: "create_video", prompt, model, aspectRatio, quality, duration?, audioEnabled?, context? }`,
+where `duration` is a string like `"8s"` and `context` is `{ mediaStorageKeys, webLinkIds }`.
+
+Generation statuses seen in the wild: `queued` and `processing` while running, `succeeded`
+or `failed` at the end. The finished file is at `generation.outputAsset.storageUrl`. Anything
+unrecognised is treated as still-running, so a renamed in-progress state is never mistaken
+for a finished one.
 
 ## Licence
 
