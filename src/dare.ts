@@ -520,7 +520,7 @@ export class DareService {
       durationSeconds,
       audioEnabled: args.audioEnabled ?? true,
       referenceVideoSeconds: refs.videoSeconds,
-      referenceCount: references.length,
+      videoReferenceCount: refs.countsByKind.video,
     });
     const estimatedCredits = perRow * count;
     this.enforceCostGuard(estimatedCredits, "video generation");

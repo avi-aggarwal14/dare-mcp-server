@@ -184,7 +184,13 @@ export function createServer(config: DareConfig = loadConfig()): McpServer {
           .min(0)
           .default(0)
           .describe("Total seconds of video references attached; billed in addition on Seedance 2.5."),
-        reference_count: z.number().int().min(0).default(0).describe("Number of reference assets attached."),
+        reference_count: z.number().int().min(0).default(0).describe("Number of reference assets attached (images count toward image-model surcharges)."),
+        video_reference_count: z
+          .number()
+          .int()
+          .min(0)
+          .default(0)
+          .describe("How many of the references are video clips. Only video references earn Seedance's 0.6x discount."),
         count: z.number().int().min(1).max(20).default(1).describe("How many variations to generate."),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -218,7 +224,7 @@ export function createServer(config: DareConfig = loadConfig()): McpServer {
                 durationSeconds: effectiveDuration,
                 audioEnabled: args.audio_enabled,
                 referenceVideoSeconds: args.reference_video_seconds,
-                referenceCount: args.reference_count,
+                videoReferenceCount: Math.max(args.video_reference_count, args.reference_video_seconds > 0 ? 1 : 0),
               })
             : estimateImageCredits(args.model, quality, aspectRatio, args.reference_count);
 
@@ -230,12 +236,12 @@ export function createServer(config: DareConfig = loadConfig()): McpServer {
           count: args.count,
           effective_duration_seconds: effectiveDuration ?? null,
           duration_derived_from_reference: autoFromVideo,
-          credits_per_row: Number(perRow.toFixed(4)),
-          estimated_total_credits: Number(total.toFixed(4)),
-          note: "Estimate only. Dare's server is authoritative and returns `insufficient_credits` if short.",
+          credits_per_row: perRow,
+          estimated_total_credits: total,
+          note: "Mirrors Dare's own pricing (provider cost x1.5, rounded up to the nearest 1/5/10 credits). Dare's server is authoritative and returns `insufficient_credits` if short.",
         };
         const md = [
-          `Estimated **${total.toFixed(2)} credits** — ${args.count} x ${perRow.toFixed(3)} for \`${args.model}\` at ${quality}.`,
+          `Estimated **${total} credits** — ${args.count} x ${perRow} for \`${args.model}\` at ${quality}.`,
           autoFromVideo
             ? "A video reference is attached, so duration is derived from it and any duration_seconds is ignored."
             : "",

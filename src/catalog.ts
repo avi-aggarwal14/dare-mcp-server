@@ -163,10 +163,34 @@ export const IMAGE_MODELS: Record<string, ImageModelSpec> = {
 };
 
 /* ------------------------------------------------------------------ *
- * Credit pricing (credits per second unless noted), mirroring Dare's
- * client-side estimator. Treat results as estimates: Dare's server is
- * the authority and returns `insufficient_credits` when short.
+ * Pricing, mirroring Dare's client-side estimator exactly.
+ *
+ * The rate tables below are Dare's underlying provider cost in US DOLLARS
+ * (per second of output unless noted). Dare converts that to credits with
+ * `dollarsToCredits`: a 1.5x markup, divided by the credit price, rounded
+ * UP to the nearest 1, 5 or 10 credits depending on size.
+ *
+ * Verified against a live charge: a 4s 480p Seedance 2.5 clip is
+ * $0.882 -> 19.85 -> rounded to 20 credits, which is what Dare billed.
  * ------------------------------------------------------------------ */
+
+/** Dollars per credit: Dare sells 750 credits for $49.99. */
+export const DOLLARS_PER_CREDIT = 49.99 / 750;
+/** Dare's markup over provider cost. */
+export const MARKUP = 1.5;
+
+/** Rounding granularity Dare applies to a credit amount. */
+function granularity(credits: number): number {
+  return credits <= 10 ? 1 : credits <= 50 ? 5 : 10;
+}
+
+/** Converts a provider cost in dollars to the credits Dare will actually charge. */
+export function dollarsToCredits(dollars: number): number {
+  if (!Number.isFinite(dollars)) return Number.NaN;
+  const raw = (dollars * MARKUP) / DOLLARS_PER_CREDIT;
+  const step = granularity(raw);
+  return Math.ceil(raw / step) * step;
+}
 
 const SEEDANCE_2_RATES: Record<string, number> = { "480p": 0.136, "720p": 0.3034, "1080p": 0.682, "4k": 1.555 };
 const SEEDANCE_2_FAST_RATES: Record<string, number> = { "480p": 0.109, "720p": 0.2419 };
@@ -181,7 +205,8 @@ const NANO_BANANA_RATES: Record<string, number> = { "1k": 0.15, "2k": 0.15, "4k"
 const SEEDREAM_RATES: Record<string, number> = { "1k": 0.0675, "2k": 0.135 };
 const SEEDREAM_PER_EXTRA_REFERENCE = 0.0045;
 
-const firstRate = (table: Record<string, number>): number => Object.values(table)[0] ?? 0;
+/** Dare falls back to the most expensive tier when a quality key is unknown. */
+const maxRate = (table: Record<string, number>): number => Math.max(...Object.values(table));
 
 export interface VideoCostInput {
   model: string;
@@ -190,30 +215,32 @@ export interface VideoCostInput {
   audioEnabled?: boolean;
   /** Total seconds of video references attached, if any. */
   referenceVideoSeconds?: number;
-  referenceCount?: number;
+  /** Number of VIDEO references attached. Image and audio references do not affect price. */
+  videoReferenceCount?: number;
 }
 
-/** Estimated credit cost for one video row. Multiply by `count` for a batch. */
-export function estimateVideoCredits(input: VideoCostInput): number {
+/** Provider cost in dollars for one video row, before Dare's markup. */
+export function videoCostDollars(input: VideoCostInput): number {
   const {
     model,
     quality,
     durationSeconds,
     audioEnabled = true,
     referenceVideoSeconds = 0,
-    referenceCount = 0,
+    videoReferenceCount = 0,
   } = input;
-  const discount = referenceCount > 0 ? REFERENCE_DISCOUNT : 1;
+  // Dare discounts Seedance generations that extend or edit an attached clip.
+  const discount = videoReferenceCount > 0 ? REFERENCE_DISCOUNT : 1;
 
   switch (model) {
     case "seedance-2":
     case "seedance-2-fast": {
       const table = model === "seedance-2" ? SEEDANCE_2_RATES : SEEDANCE_2_FAST_RATES;
-      const rate = table[quality] ?? firstRate(table);
+      const rate = table[quality] ?? maxRate(table);
       return rate * (durationSeconds ?? 8) * discount;
     }
     case "seedance-2-5": {
-      const rate = SEEDANCE_2_5_RATES[quality] ?? firstRate(SEEDANCE_2_5_RATES);
+      const rate = SEEDANCE_2_5_RATES[quality] ?? maxRate(SEEDANCE_2_5_RATES);
       const refSeconds = Math.min(referenceVideoSeconds, 30);
       const base = durationSeconds ?? refSeconds;
       return rate * (base + refSeconds) * discount;
@@ -232,16 +259,21 @@ export function estimateVideoCredits(input: VideoCostInput): number {
   }
 }
 
-/** Estimated credit cost for one image row. */
-export function estimateImageCredits(model: string, quality: string, aspectRatio: string, referenceCount = 0): number {
+/** Credits Dare will charge for one video row. Multiply by `count` for a batch. */
+export function estimateVideoCredits(input: VideoCostInput): number {
+  return dollarsToCredits(videoCostDollars(input));
+}
+
+/** Provider cost in dollars for one image row, before Dare's markup. */
+export function imageCostDollars(model: string, quality: string, aspectRatio: string, referenceCount = 0): number {
   switch (model) {
     case "nano-banana-2":
-      return NANO_BANANA_RATES[quality] ?? firstRate(NANO_BANANA_RATES);
+      return NANO_BANANA_RATES[quality] ?? maxRate(NANO_BANANA_RATES);
     case "gpt-image-2":
       return (IMAGE_GPT_ASPECT_RATES[aspectRatio] ?? IMAGE_GPT_ASPECT_RATES["1:1"]!) +
         IMAGE_GPT_PER_REFERENCE * referenceCount;
     case "seedream-5-pro":
-      return (SEEDREAM_RATES[quality] ?? firstRate(SEEDREAM_RATES)) +
+      return (SEEDREAM_RATES[quality] ?? maxRate(SEEDREAM_RATES)) +
         SEEDREAM_PER_EXTRA_REFERENCE * Math.max(0, referenceCount - 1);
     default:
       return Number.NaN;
@@ -250,3 +282,8 @@ export function estimateImageCredits(model: string, quality: string, aspectRatio
 
 export const VIDEO_MODEL_IDS = Object.keys(VIDEO_MODELS);
 export const IMAGE_MODEL_IDS = Object.keys(IMAGE_MODELS);
+
+/** Credits Dare will charge for one image row. */
+export function estimateImageCredits(model: string, quality: string, aspectRatio: string, referenceCount = 0): number {
+  return dollarsToCredits(imageCostDollars(model, quality, aspectRatio, referenceCount));
+}

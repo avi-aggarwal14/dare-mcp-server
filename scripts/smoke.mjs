@@ -51,7 +51,8 @@ for (const tool of tools) {
 }
 
 const estimate = responses.get(3)?.result?.structuredContent;
-if (estimate?.estimated_total_credits !== 9.46) fail(`cost estimate drifted: ${JSON.stringify(estimate)}`);
+// 2 x (10s x $0.473 = $4.73 -> x1.5 / $0.06665 = 106.4 -> rounded up to 110) = 220, matching Dare's billing.
+if (estimate?.estimated_total_credits !== 220) fail(`cost estimate drifted: ${JSON.stringify(estimate)}`);
 
 const models = responses.get(4)?.result?.structuredContent?.video_models ?? [];
 if (!models.some((m) => m.id === "seedance-2-5")) fail("seedance-2-5 missing from the catalogue");

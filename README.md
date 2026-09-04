@@ -95,7 +95,7 @@ Edit the Claude desktop config:
       "args": ["/absolute/path/to/dare-mcp-server/dist/stdio.js"],
       "env": {
         "DARE_CLIENT_TOKEN": "eyJ...",
-        "DARE_MAX_CREDITS_PER_CALL": "50",
+        "DARE_MAX_CREDITS_PER_CALL": "500",
         "DARE_UPLOAD_ROOTS": "/Users/you/Movies,/Users/you/Pictures"
       }
     }
@@ -122,7 +122,8 @@ alongside your files — generate a clip and have it written straight into a con
 | `DARE_CLERK_FAPI_URL` | `https://clerk.trydare.com` | Clerk Frontend API base. |
 
 `DARE_MAX_CREDITS_PER_CALL` is worth setting. It is a client-side circuit breaker against a
-model talking itself into a 10-variation 30-second batch. The guard fails closed: if a
+model talking itself into a 10-variation 30-second batch (3,200 credits). 500 allows any single
+Seedance 2.5 clip while blocking runaway batches. The guard fails closed: if a
 reference clip's duration cannot be read, the generation is refused rather than submitted on
 a guessed estimate.
 
@@ -133,18 +134,29 @@ Point it at the folders that actually hold your source footage.
 
 ## Credit costs
 
-Rates mirror Dare's own estimator, in credits per second of output:
+Dare prices every job as **provider cost in dollars, times 1.5, converted at 750 credits per
+$49.99, rounded up** to the nearest 1, 5 or 10 credits. The server reproduces that formula
+exactly; it was checked against real charges (a 4s 480p Seedance 2.5 clip billed 20 credits, as
+predicted). Typical figures:
 
-| Model | 480p | 720p | 1080p | 4K |
-| --- | --- | --- | --- | --- |
-| Seedance 2.5 | 0.2205 | 0.473 | — | — |
-| Seedance 2.0 | 0.136 | 0.3034 | 0.682 | 1.555 |
-| Seedance 2.0 Fast | 0.109 | 0.2419 | — | — |
+| Job | Credits |
+| --- | --- |
+| Seedance 2.5, 4s, 480p | 20 |
+| Seedance 2.5, 8s, 720p | 90 |
+| Seedance 2.5, 10s, 720p | 110 |
+| Seedance 2.5, 30s, 480p | 150 |
+| Seedance 2.5, 30s, 720p | 320 |
+| Seedance 2.0 Fast, 5s, 480p | 15 |
+| Seedance 2.0, 15s, 4K | 530 |
+| Veo 3.1, 8s, 1080p | 80 |
+| Kling 3.0 Pro, 5s | 20 |
+| Hailuo 2.3 Pro (fixed 6s) | 15 |
+| Nano Banana 2 image, 2K | 4 |
+| GPT Image 2, 1:1 | 5 |
 
-Veo 3.1 runs 0.2–0.6/s depending on quality and audio; Kling 3.0 Pro 0.112–0.168/s;
-Hailuo 2.3 is a flat 0.49 per clip. Attaching references applies a 0.6× multiplier, and on
-Seedance 2.5 the reference video's own seconds are billed on top. A 10-second 720p Seedance 2.5
-clip is about **4.73 credits**.
+Attaching a **video** reference applies a 0.6x multiplier on Seedance models, and on Seedance
+2.5 the reference clip's own seconds are billed on top. Image and audio references do not
+change the price.
 
 Always sanity-check with `dare_estimate_cost` before a batch.
 

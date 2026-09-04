@@ -19,11 +19,12 @@ production JS bundles. That has two consequences worth holding onto:
 | Layer | Status |
 | --- | --- |
 | MCP handshake, tool schemas, annotations | verified (`npm run check` + `node scripts/smoke.mjs`) |
-| Credit pricing arithmetic | verified against Dare's own estimator |
-| Clerk token minting | endpoint confirmed live; full flow needs a real `__client` cookie |
-| `generations.create` payload | derived from the client bundle, **not yet confirmed against the live server** |
+| Credit pricing | verified against two real charges (20 and 7 credits, both predicted exactly) |
+| Clerk token minting | verified live |
+| `generations.create` | verified live (`outcome: "created"`, id returned, job ran) |
+| Every read procedure | verified live; response shapes documented in README |
 
-The last row is the risk. If a real generation fails, that is the first place to look.
+Everything in the request path has now been exercised against Dare's real servers.
 
 ## How the contract was derived
 
@@ -42,7 +43,9 @@ The files that matter:
   the optimistic library placeholder and is never sent. Getting this wrong was the original bug.
 - `workspace-catalog-*.js` — per-model constraints: durations, aspect ratios, qualities,
   reference limits. Mirrored in `src/catalog.ts`.
-- `src-1-*.js` — the credit cost calculator. Also mirrored in `src/catalog.ts`.
+- `src-1-*.js` — the credit cost calculator. Also mirrored in `src/catalog.ts`. The rate tables
+  in it are **dollars** of provider cost; the `l()` wrapper (`x1.5 / (49.99/750)`, rounded up)
+  is what turns them into credits. Missing that wrapper understated every price by ~23x.
 - `orpc-*.js` — the transport: `POST {VITE_SERVER_URL}/rpc` with
   `Authorization: Bearer <clerk session jwt>`.
 
@@ -80,8 +83,9 @@ node scripts/smoke.mjs                      # offline, no credentials, no credit
 DARE_CLIENT_TOKEN='eyJ...' npm run check    # live, read-only, free
 ```
 
-For a live generation, start at the floor: `seedance-2-5`, 4 seconds, 480p, count 1 — about
-0.88 credits. Never debug with a 30-second 720p batch.
+For a live generation, start at the floor: `seedance-2-5`, 4 seconds, 480p, count 1 — 20
+credits. A Seedance 2.5 job takes several minutes; poll with `wait_seconds` up to 900. Never
+debug with a 30-second 720p batch (320 credits each).
 
 ## If a call fails
 
@@ -90,5 +94,7 @@ For a live generation, start at the floor: `seedance-2-5`, 4 seconds, 480p, coun
   `createInput` in `src/dare.ts` against the current `mutateAsync` call in `composer-view-*.js`.
 - `DARE_UNAUTHORIZED` after previously working — the Clerk session was signed out. Copy a fresh
   `__client` cookie.
+- Clerk's Frontend API refuses requests carrying both `Origin` and `Authorization` headers.
+  `src/auth.ts` sends only the cookie; keep it that way.
 
 When you fix a contract drift, update the procedure table in `README.md` in the same commit.
