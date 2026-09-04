@@ -117,17 +117,21 @@ export class DareRpcClient {
       }
       if (response.status === 400 || code === "INPUT_VALIDATION_FAILED" || code === "BAD_REQUEST") {
         // Surface zod issue paths so a contract drift is diagnosable from the error alone.
-        const issues = Array.isArray(payload?.data?.issues)
-          ? payload.data.issues.map((i: any) => `${(i.path ?? []).join(".") || "(root)"}: ${i.message}`).join("; ")
+        const issueList: string[] = Array.isArray(payload?.data?.issues)
+          ? payload.data.issues.map((i: any) => `${(i.path ?? []).join(".") || "(root)"}: ${i.message}`)
+          : [];
+        const detail = issueList.length
+          ? ` [${issueList.join("; ")}]`
           : payload?.data
-            ? JSON.stringify(payload.data).slice(0, 500)
+            ? ` ${JSON.stringify(payload.data).slice(0, 500)}`
             : "";
-        throw new DareError(`Dare rejected the input to ${procedure}: ${message}${issues ? ` [${issues}]` : ""}`, {
+        throw new DareError(`Dare rejected the input to ${procedure}: ${message}${detail}`, {
           code: "DARE_BAD_REQUEST",
           status: response.status,
+          issues: issueList.length ? issueList : undefined,
           // Field-level issues mean our request shape drifted from Dare's schema; a plain
           // message is Dare describing a problem with the data itself.
-          hint: issues
+          hint: issueList.length
             ? "The request shape no longer matches Dare's schema. Compare src/dare.ts against the web app's current request (see CLAUDE.md)."
             : "Adjust the input as the message describes.",
         });

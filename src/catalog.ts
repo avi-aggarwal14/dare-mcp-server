@@ -13,7 +13,7 @@ export type MediaKind = "image" | "video" | "audio";
  * Optional fields are optional for a reason: Dare's composer only puts a key in the
  * request spec when the model's config declares it. Hailuo sends `{tool, prompt, model}`
  * and nothing else; Kling has durations but no quality tier; GPT Image 2 has aspect
- * ratios but no quality. `buildSpec` in dare.ts follows the same rule.
+ * ratios but no quality. `createVideo` / `createImage` in dare.ts follow the same rule.
  */
 export interface VideoModelSpec {
   id: string;
@@ -35,7 +35,7 @@ export interface VideoModelSpec {
   audioRequiresVisual?: boolean;
   /** With any reference attached, only these durations are allowed. */
   durationsWithReference?: number[];
-  /** A video reference drives duration and aspect ratio; both are omitted from the spec. */
+  /** A video reference drives duration and aspect ratio: `duration` is omitted and `aspectRatio` is sent as "auto". */
   autoDurationWithVideoReference: boolean;
   defaults: { aspectRatio?: string; durationSeconds?: number; quality?: string };
 }

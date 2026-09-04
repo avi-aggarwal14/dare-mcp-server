@@ -3,13 +3,16 @@ export class DareError extends Error {
   readonly code: string;
   readonly status?: number;
   readonly hint?: string;
+  /** Field-level validation issues from Dare, when the server supplied them. */
+  readonly issues?: string[];
 
-  constructor(message: string, opts: { code?: string; status?: number; hint?: string } = {}) {
+  constructor(message: string, opts: { code?: string; status?: number; hint?: string; issues?: string[] } = {}) {
     super(message);
     this.name = "DareError";
     this.code = opts.code ?? "DARE_ERROR";
     this.status = opts.status;
     this.hint = opts.hint;
+    this.issues = opts.issues;
   }
 
   /** Message plus remediation, for surfacing to the calling model. */

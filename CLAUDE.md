@@ -73,8 +73,9 @@ src/http.ts      optional remote entrypoint
   replay bills twice. `REPLAYABLE` in `src/rpc.ts` is an allowlist of read-only procedures.
 - **Always return `generation_ids`, even when the optional wait fails.** Credits are already
   spent by then; losing the id orphans a paid job. See `settleWait` in `src/server.ts`.
-- **The cost guard fails closed.** If a reference clip's duration cannot be read, refuse the
-  generation rather than submit on a guessed estimate.
+- **The cost guard fails closed.** A reference Dare cannot find is refused outright; a video
+  reference Dare finds but cannot measure is priced at 30 seconds (Dare's own assumption), so
+  the estimate can only ever be high, never low.
 - **Treat unknown generation statuses as still-running**, never as finished.
 - **Local file uploads stay behind the `DARE_UPLOAD_ROOTS` allowlist**, and stay disabled on the
   HTTP transport. Without this, a prompt-injected model can have the server upload its own

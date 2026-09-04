@@ -1,6 +1,8 @@
 import { extname, resolve, sep } from "node:path";
 import { readFile, realpath, stat } from "node:fs/promises";
 import { lookup as dnsLookup } from "node:dns/promises";
+import { isIPv4, isIPv6 } from "node:net";
+import { Agent, fetch as undiciFetch } from "undici";
 import { randomUUID } from "node:crypto";
 import type { DareConfig } from "./config.js";
 import type { DareRpcClient } from "./rpc.js";
@@ -80,31 +82,68 @@ function mediaKindFromMime(mime: string): MediaKind | null {
   return null;
 }
 
-function isBlockedAddress(ip: string): boolean {
-  let v4 = ip;
-  // IPv4-mapped IPv6 (::ffff:127.0.0.1) must be judged as the IPv4 it wraps.
-  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(ip);
-  if (mapped) v4 = mapped[1]!;
-  if (/^\d+\.\d+\.\d+\.\d+$/.test(v4)) {
-    const [a, b] = v4.split(".").map(Number) as [number, number];
-    if (a === 0 || a === 10 || a === 127) return true; // this-host, private, loopback
-    if (a === 169 && b === 254) return true; // link-local / cloud metadata
-    if (a === 172 && b >= 16 && b <= 31) return true; // private
-    if (a === 192 && b === 168) return true; // private
-    if (a === 100 && b >= 64 && b <= 127) return true; // carrier-grade NAT
-    if (a >= 224) return true; // multicast and reserved
-    return false;
-  }
-  const lower = ip.toLowerCase();
-  if (lower === "::" || lower === "::1") return true;
-  if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // unique local
-  if (lower.startsWith("fe8") || lower.startsWith("fe9") || lower.startsWith("fea") || lower.startsWith("feb")) return true; // link-local
-  if (lower.startsWith("ff")) return true; // multicast
+function isBlockedIPv4(v4: string): boolean {
+  const [a, b] = v4.split(".").map(Number) as [number, number];
+  if (a === 0 || a === 10 || a === 127) return true; // this-host, private, loopback
+  if (a === 169 && b === 254) return true; // link-local / cloud metadata
+  if (a === 172 && b >= 16 && b <= 31) return true; // private
+  if (a === 192 && b === 168) return true; // private
+  if (a === 100 && b >= 64 && b <= 127) return true; // carrier-grade NAT
+  if (a >= 224) return true; // multicast and reserved
   return false;
 }
 
-/** Resolves a hostname and refuses anything that lands in a private or special-use range. */
-async function assertPublicHost(hostname: string): Promise<void> {
+/** Expands an IPv6 address to eight 16-bit groups; null if unparseable. */
+function expandIPv6(ip: string): number[] | null {
+  let text = ip.replace(/^\[|\]$/g, "").split("%")[0]!;
+  // Trailing dotted quad (::ffff:127.0.0.1) -> two hex groups.
+  const dotted = /^(.*:)(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(text);
+  if (dotted) {
+    const [, head, a, b, c, d] = dotted;
+    const hi = ((Number(a) << 8) | Number(b)).toString(16);
+    const lo = ((Number(c) << 8) | Number(d)).toString(16);
+    text = `${head}${hi}:${lo}`;
+  }
+  const halves = text.split("::");
+  if (halves.length > 2) return null;
+  const left = halves[0] ? halves[0].split(":") : [];
+  const right = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
+  const fill = halves.length === 2 ? 8 - left.length - right.length : 0;
+  if (fill < 0 || (halves.length === 1 && left.length !== 8)) return null;
+  const groups = [...left, ...Array(fill).fill("0"), ...right].map((g) => parseInt(g || "0", 16));
+  return groups.length === 8 && groups.every((g) => Number.isFinite(g) && g >= 0 && g <= 0xffff) ? groups : null;
+}
+
+function isBlockedAddress(ip: string): boolean {
+  if (isIPv4(ip)) return isBlockedIPv4(ip);
+  if (!isIPv6(ip)) return true; // not an address at all: refuse
+  const g = expandIPv6(ip);
+  if (!g) return true;
+  // IPv4-mapped (::ffff:a.b.c.d, in dotted OR hex form) and IPv4-compatible (::a.b.c.d):
+  // judge the embedded IPv4.
+  const isMapped = g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff;
+  const isCompat = g.slice(0, 6).every((x) => x === 0) && (g[6] !== 0 || g[7] !== 0);
+  if (isMapped || isCompat) {
+    const v4 = `${g[6]! >> 8}.${g[6]! & 0xff}.${g[7]! >> 8}.${g[7]! & 0xff}`;
+    return isBlockedIPv4(v4);
+  }
+  if (g.every((x) => x === 0)) return true; // ::
+  if (g.slice(0, 7).every((x) => x === 0) && g[7] === 1) return true; // ::1
+  const first = g[0]!;
+  if ((first & 0xfe00) === 0xfc00) return true; // fc00::/7 unique local
+  if ((first & 0xffc0) === 0xfe80) return true; // fe80::/10 link-local
+  if ((first & 0xff00) === 0xff00) return true; // ff00::/8 multicast
+  if (first === 0x2002) return isBlockedIPv4(`${g[1]! >> 8}.${g[1]! & 0xff}.${g[2]! >> 8}.${g[2]! & 0xff}`); // 6to4
+  if (first === 0x0064 && g[1] === 0xff9b) return isBlockedIPv4(`${g[6]! >> 8}.${g[6]! & 0xff}.${g[7]! >> 8}.${g[7]! & 0xff}`); // NAT64
+  return false;
+}
+
+/**
+ * Resolves a hostname, refuses anything in a private or special-use range, and returns the
+ * vetted addresses so the connection can be pinned to them (closing the resolve-then-fetch
+ * rebinding window).
+ */
+async function assertPublicHost(hostname: string): Promise<Array<{ address: string; family: 4 | 6 }>> {
   const bare = hostname.replace(/^\[|\]$/g, "");
   if (bare === "localhost" || bare.endsWith(".localhost") || bare.endsWith(".local")) {
     throw new DareError(`Refusing to fetch ${hostname}: local hostname.`, {
@@ -112,18 +151,39 @@ async function assertPublicHost(hostname: string): Promise<void> {
       hint: "Only public URLs can be uploaded.",
     });
   }
-  let addresses: string[];
+  let entries: Array<{ address: string; family: number }>;
   try {
-    addresses = (await dnsLookup(bare, { all: true })).map((entry) => entry.address);
+    entries = isIPv4(bare) || isIPv6(bare) ? [{ address: bare, family: isIPv4(bare) ? 4 : 6 }] : await dnsLookup(bare, { all: true });
   } catch {
     throw new DareError(`Could not resolve ${hostname}.`, { code: "DARE_NETWORK", hint: "Check the URL." });
   }
-  if (addresses.length === 0 || addresses.some(isBlockedAddress)) {
+  if (entries.length === 0 || entries.some((e) => isBlockedAddress(e.address))) {
     throw new DareError(`Refusing to fetch ${hostname}: resolves to a private or reserved address.`, {
       code: "DARE_UPLOAD_FORBIDDEN",
       hint: "Only public URLs can be uploaded.",
     });
   }
+  return entries.map((e) => ({ address: e.address, family: e.family === 6 ? 6 : 4 }));
+}
+
+/** A fetch whose connections go only to addresses vetted by assertPublicHost. */
+function pinnedFetch(url: URL, vetted: Array<{ address: string; family: 4 | 6 }>, signal: AbortSignal): Promise<Response> {
+  const agent = new Agent({
+    connect: {
+      // Node calls lookup with {all:true} when autoSelectFamily is on and expects an array;
+      // otherwise it expects (address, family). Serve both shapes from the vetted list.
+      lookup: ((_hostname: string, opts: any, callback: any) => {
+        if (opts && typeof opts === "object" && opts.all) {
+          callback(null, vetted.map((v) => ({ address: v.address, family: v.family })));
+        } else {
+          const first = vetted[0]!;
+          callback(null, first.address, first.family);
+        }
+      }) as any,
+    },
+  });
+  // undici's fetch, not the global one, so the dispatcher is guaranteed to be honoured.
+  return undiciFetch(url, { signal, redirect: "manual", dispatcher: agent }) as unknown as Promise<Response>;
 }
 
 /**
@@ -191,10 +251,10 @@ export class DareService {
           // Dare answers an unknown or unreadable storage key with NOT_FOUND or a 400
           // "couldn't read this file". Either way the reference is unusable; anything else
           // (auth, network, 5xx) is a real failure the caller must see.
-          if (err instanceof DareError && (err.code === "DARE_NOT_FOUND" || err.code === "DARE_BAD_REQUEST")) {
+          if (err instanceof DareError && (err.code === "DARE_NOT_FOUND" || (err.code === "DARE_BAD_REQUEST" && !err.issues))) {
             return { key, info: null };
           }
-          throw err;
+          throw err; // auth, network, 5xx, or a schema drift with field-level issues
         }
       }),
     );
@@ -289,11 +349,13 @@ export class DareService {
         if (current.protocol !== "https:" && current.protocol !== "http:") {
           throw new DareError(`Unsupported URL scheme ${current.protocol}`, { code: "DARE_BAD_INPUT" });
         }
-        await assertPublicHost(current.hostname);
-        const res = await fetch(current, { signal: controller.signal, redirect: "manual" });
+        const vetted = await assertPublicHost(current.hostname);
+        const res = await pinnedFetch(current, vetted, controller.signal);
         if (res.status >= 300 && res.status < 400) {
           const location = res.headers.get("location");
-          if (!location) break;
+          if (!location) {
+            throw new DareError(`${current} answered HTTP ${res.status} without a Location header.`, { code: "DARE_FETCH_ERROR" });
+          }
           current = new URL(location, current);
           continue;
         }

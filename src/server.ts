@@ -243,7 +243,7 @@ export function createServer(config: DareConfig = loadConfig()): McpServer {
           note: "Mirrors Dare's own pricing (provider cost x1.5, rounded up to the nearest 1/5/10 credits). Dare's server is authoritative and returns `insufficient_credits` if short.",
         };
         const md = [
-          `Estimated **${total} credits** — ${args.count} x ${perRow} for \`${args.model}\` at ${quality}.`,
+          `Estimated **${total} credits** — ${args.count} x ${perRow} for \`${args.model}\`${quality ? ` at ${quality}` : ""}${effectiveDuration ? `, ${effectiveDuration}s` : ""}.`,
           autoFromVideo
             ? "A video reference is attached, so duration is derived from it and any duration_seconds is ignored."
             : "",
@@ -299,10 +299,10 @@ export function createServer(config: DareConfig = loadConfig()): McpServer {
         duration_seconds: z
           .number()
           .int()
-          .min(4)
+          .min(3)
           .max(30)
           .optional()
-          .describe("Clip length. Seedance 2.5 allows 4–30; other models are narrower. Ignored when a video reference sets it."),
+          .describe("Clip length in seconds. Seedance 2.5: 4–30; Seedance 2.0: 4–15; Kling: 3–15; Veo: 4/6/8 (8 with a reference); Hailuo: fixed. Ignored when a Seedance 2.5 video reference sets it."),
         quality: z.string().optional().describe("Quality tier, e.g. `480p` or `720p` for Seedance 2.5."),
         aspect_ratio: z.string().optional().describe("Aspect ratio such as `16:9`, `9:16` or `auto`."),
         audio_enabled: z.boolean().default(true).describe("Generate synchronised audio where the model supports it."),

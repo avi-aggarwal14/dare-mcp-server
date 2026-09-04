@@ -124,7 +124,9 @@ alongside your files — generate a clip and have it written straight into a con
 
 `DARE_MAX_CREDITS_PER_CALL` is a client-side circuit breaker against a model talking itself
 into a 10-variation 30-second batch (3,200 credits). The default of 500 allows any single
-Seedance 2.5 clip while blocking runaway batches; raise it deliberately when you want a batch. The guard fails closed: if a
+Seedance 2.5 clip while blocking runaway batches; raise it deliberately when you want a batch.
+The estimate is conservative in the one place it cannot be exact: a video reference whose
+length Dare cannot report is priced at 30 seconds, which is Dare's own assumption. The guard fails closed: if a
 reference clip's duration cannot be read, the generation is refused rather than submitted on
 a guessed estimate.
 
@@ -219,7 +221,9 @@ transport where local reads are disabled.
   spend your credits.
 - `dare_generate_*` calls are never retried automatically after an auth failure. Dare's create
   endpoint has no idempotency key, so a blind retry could bill you twice.
-- Uploading from a URL refuses loopback, link-local and private address ranges.
+- Uploading from a URL resolves the host first, refuses loopback, private, link-local, CGNAT,
+  multicast and IPv4-mapped/6to4/NAT64 forms of those, pins the connection to the vetted address
+  so DNS rebinding cannot race the check, and re-checks every redirect hop.
 
 ## How it works
 
@@ -248,7 +252,7 @@ Uploads are three steps: `storage.generateUploadUrl` -> `PUT` to signed storage 
 | `libraryItems.list`, `uploads.list` | `{ cursor, limit }` |
 | `storage.generateUploadUrl` | `{ contentType, fileExtension }` |
 | `uploads.create` | `{ storageKey, name, prompt, projectId, timezone }` |
-| `uploads.get` / `uploads.delete` | `{ id }` |
+| `uploads.delete` | `{ id }` |
 | `credits.getBalance`, `projects.list` | no input |
 
 `spec` carries only the keys the chosen model declares, exactly as Dare's composer builds it:
