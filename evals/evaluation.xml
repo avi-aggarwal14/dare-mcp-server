@@ -1,0 +1,48 @@
+<evaluation>
+  <!--
+    Read-only, deterministic evaluations for dare-mcp-server. Every answer is derived
+    from dare_list_models and dare_estimate_cost, which run entirely offline: no Dare
+    credentials, no network, no credits spent. Answers are stable as long as Dare's
+    published pricing and model constraints are unchanged.
+  -->
+  <qa_pair>
+    <question>Using the Dare tools, work out the total credit cost of generating three variations of a 12-second Seedance 2.5 clip at 720p with no reference media. Give the number rounded to two decimal places.</question>
+    <answer>17.03</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Only one Dare video model can produce a 30-second clip in a single generation. What is its model id?</question>
+    <answer>seedance-2-5</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>A user wants the cheapest possible 10-second video on Dare. Considering only models that actually support a 10-second duration, each at its lowest quality tier with audio enabled, which model id costs least?</question>
+    <answer>seedance-2-fast</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Which Dare video model charges a flat credit cost per clip regardless of the requested duration? Give its model id.</question>
+    <answer>hailuo-2-3</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>One of the Seedance video models on Dare supports a 4K quality tier. For that model, how many credits does one second of 4K output cost, with no references attached? Give the exact figure.</question>
+    <answer>1.555</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>For Seedance 2.5, how many image references can be attached to a single generation at most?</question>
+    <answer>30</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Compare an 8-second Seedance 2.5 clip at 480p against the same clip at 720p, no references. How many more credits does the 720p version cost? Round to two decimal places.</question>
+    <answer>2.02</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Estimate the cost of a single 6-second Veo 3.1 clip at 4K with audio enabled on Dare. Give the number rounded to one decimal place.</question>
+    <answer>3.6</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Ask the Dare tools to estimate a 20-second Seedance 2.5 generation at 720p that also has 10 seconds of video reference attached. What does the tool report as the effective duration in seconds, given how the model handles video references?</question>
+    <answer>null</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Which Dare image model's credit cost depends on the chosen aspect ratio rather than a quality tier? Give its model id.</question>
+    <answer>gpt-image-2</answer>
+  </qa_pair>
+</evaluation>
