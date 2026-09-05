@@ -1,8 +1,6 @@
 # Contributing
 
-Thanks for taking a look. This is a small project with a specific fragility: it speaks Dare's
-private RPC, so the most valuable contributions are usually "Dare changed something and here is
-what it changed to".
+Thanks for taking a look.
 
 ## Ground rules
 
