@@ -1,0 +1,46 @@
+{
+  "name": "dare-mcp",
+  "version": "0.2.0",
+  "description": "Short alias for dare-mcp-server — MCP server for Dare (trydare.com) AI video generation. Installs and runs the real package.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Avi Aggarwal (https://github.com/avi-aggarwal14)",
+  "homepage": "https://github.com/avi-aggarwal14/dare-mcp-server#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/avi-aggarwal14/dare-mcp-server.git",
+    "directory": "alias/dare-mcp"
+  },
+  "bugs": {
+    "url": "https://github.com/avi-aggarwal14/dare-mcp-server/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "mcp-server",
+    "claude",
+    "claude-code",
+    "dare",
+    "trydare",
+    "seedance",
+    "video-generation",
+    "text-to-video"
+  ],
+  "bin": {
+    "dare-mcp": "bin.js"
+  },
+  "main": "bin.js",
+  "files": [
+    "bin.js",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "dare-mcp-server": "0.2.0"
+  }
+}

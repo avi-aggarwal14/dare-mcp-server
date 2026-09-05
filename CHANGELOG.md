@@ -17,6 +17,9 @@ The "install it in one command" release.
   your Claude config. `DARE_CLIENT_TOKEN` still wins when set. Override the location with
   `DARE_CONFIG_DIR`.
 - Single CLI entry point with subcommands: `setup`, `check`, `http`, `--help`, `--version`.
+- `dare-mcp` published alongside as a short alias: a real forwarding package pinned to the
+  exact canonical version, so `npx dare-mcp setup` behaves identically. Lockstep is enforced by
+  `scripts/sync-alias.mjs --check` in CI and at prepublish.
 - `CONTRIBUTING.md`, `SECURITY.md`, issue templates, and a tag-triggered npm publish workflow.
 
 ### Changed

@@ -23,6 +23,7 @@ jobs:
       - run: npm run build
       - name: Tests
         run: |
+          node scripts/sync-alias.mjs --check
           node scripts/setup-test.mjs
           node scripts/smoke.mjs
       - name: Check tag matches package version
@@ -33,6 +34,29 @@ jobs:
             echo "Tag v$TAG does not match package.json version $PKG" >&2
             exit 1
           fi
-      - run: npm publish --provenance --access public
+      - name: Publish dare-mcp-server
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # The alias pins an exact dependency, so it can only publish once the
+      # canonical version above is live on the registry.
+      - name: Wait for the registry to serve the new version
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          for i in $(seq 1 30); do
+            if npm view "dare-mcp-server@$VERSION" version >/dev/null 2>&1; then
+              echo "dare-mcp-server@$VERSION is live"
+              exit 0
+            fi
+            echo "waiting for dare-mcp-server@$VERSION ($i/30)"
+            sleep 10
+          done
+          echo "Timed out waiting for the registry" >&2
+          exit 1
+
+      - name: Publish dare-mcp alias
+        working-directory: alias/dare-mcp
+        run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

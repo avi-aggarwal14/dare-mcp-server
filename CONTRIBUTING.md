@@ -62,9 +62,19 @@ Maintainer only:
 
 ```bash
 npm version minor          # updates package.json
+npm run sync:alias         # pulls alias/dare-mcp to the same version
 # bump SERVER_VERSION in src/server.ts to match
 # add a CHANGELOG.md entry
 git push --follow-tags
 ```
 
 Pushing a `v*` tag runs the publish workflow, which needs the `NPM_TOKEN` repository secret.
+It publishes `dare-mcp-server`, waits for the registry to serve it, then publishes the
+`dare-mcp` alias, which pins that exact version.
+
+### The alias
+
+`alias/dare-mcp` is a two-file package that forwards to the real CLI in-process. It holds the
+shorter name on npm as a working package rather than a placeholder. It must never grow logic
+of its own — if you find yourself editing `bin.js` for anything but resolution errors, the
+change belongs in `src/`. `npm run check:alias` fails the build if its version drifts.

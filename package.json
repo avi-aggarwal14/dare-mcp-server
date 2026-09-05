@@ -52,9 +52,11 @@
     "inspect": "npx @modelcontextprotocol/inspector node dist/cli.js",
     "smoke": "node scripts/smoke.mjs",
     "prepare": "npm run build",
-    "prepublishOnly": "npm run clean && npm run build",
-    "test": "npm run build && node scripts/setup-test.mjs && node scripts/smoke.mjs",
-    "test:setup": "node scripts/setup-test.mjs"
+    "prepublishOnly": "npm run clean && npm run build && node scripts/sync-alias.mjs --check",
+    "test": "npm run build && node scripts/sync-alias.mjs --check && node scripts/setup-test.mjs && node scripts/smoke.mjs",
+    "test:setup": "node scripts/setup-test.mjs",
+    "sync:alias": "node scripts/sync-alias.mjs",
+    "check:alias": "node scripts/sync-alias.mjs --check"
   },
   "engines": {
     "node": ">=20"

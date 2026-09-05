@@ -48,6 +48,9 @@ That is the whole install. The wizard:
 
 Restart Claude when it finishes. In Claude Code, `/mcp` should now list **dare**.
 
+`npx dare-mcp setup` works too — [`dare-mcp`](https://www.npmjs.com/package/dare-mcp) is a
+short alias that forwards to the same package.
+
 <details>
 <summary><b>Step 2 in detail: finding your Dare token</b></summary>
 
