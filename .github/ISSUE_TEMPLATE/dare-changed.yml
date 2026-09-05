@@ -1,0 +1,39 @@
+name: Dare changed something
+description: A procedure, spec shape, model or price no longer matches
+labels: [dare-drift]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This server speaks Dare's private RPC, so drift is expected. Thanks for catching it.
+
+        **Redact the `Authorization` header and any `__client` value before pasting captures.**
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What drifted
+      options:
+        - A procedure name or path
+        - A request spec shape
+        - A response shape
+        - Pricing
+        - A model was added or removed
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: What you captured
+      description: |
+        Do the thing in the Dare web app, open the network tab, and paste the request
+        the app actually sent (redacted). Include the procedure name.
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: current
+    attributes:
+      label: What this server sends instead
+      description: From `dry_run: true`, or the relevant bit of src/dare.ts.
+      render: json

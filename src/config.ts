@@ -1,4 +1,12 @@
-/** Runtime configuration, sourced from environment variables. */
+/**
+ * Runtime configuration.
+ *
+ * Sources, highest precedence first:
+ *   1. explicit overrides passed to `loadConfig`
+ *   2. environment variables
+ *   3. `~/.dare-mcp/config.json`, written by `dare-mcp-server setup`
+ */
+import { readStoredConfig } from "./store.js";
 
 export interface DareConfig {
   /** Long-lived Clerk `__client` JWT copied from a signed-in trydare.com browser session. */
@@ -51,8 +59,9 @@ function list(name: string): string[] {
 }
 
 export function loadConfig(overrides: Partial<DareConfig> = {}): DareConfig {
+  const stored = readStoredConfig();
   return {
-    clientToken: process.env.DARE_CLIENT_TOKEN?.trim() || undefined,
+    clientToken: process.env.DARE_CLIENT_TOKEN?.trim() || stored.clientToken?.trim() || undefined,
     sessionToken: process.env.DARE_SESSION_TOKEN?.trim() || undefined,
     sessionId: process.env.DARE_SESSION_ID?.trim() || undefined,
     serverUrl: (process.env.DARE_SERVER_URL || "https://api.trydare.com").replace(/\/+$/, ""),
@@ -60,9 +69,9 @@ export function loadConfig(overrides: Partial<DareConfig> = {}): DareConfig {
     webUrl: (process.env.DARE_WEB_URL || "https://trydare.com").replace(/\/+$/, ""),
     clerkApiVersion: process.env.DARE_CLERK_API_VERSION || "2025-04-10",
     clerkJsVersion: process.env.DARE_CLERK_JS_VERSION || "5.99.0",
-    maxCreditsPerCall: num("DARE_MAX_CREDITS_PER_CALL", 500),
+    maxCreditsPerCall: num("DARE_MAX_CREDITS_PER_CALL", stored.maxCreditsPerCall ?? 500),
     requestTimeoutMs: num("DARE_REQUEST_TIMEOUT_MS", 120_000),
-    uploadRoots: list("DARE_UPLOAD_ROOTS"),
+    uploadRoots: process.env.DARE_UPLOAD_ROOTS ? list("DARE_UPLOAD_ROOTS") : (stored.uploadRoots ?? []),
     allowUrlUploads: bool("DARE_ALLOW_URL_UPLOADS", true),
     maxUploadBytes: num("DARE_MAX_UPLOAD_BYTES", 512 * 1024 * 1024),
     ...overrides,

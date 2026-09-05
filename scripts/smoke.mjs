@@ -5,6 +5,9 @@
  * touching Dare or spending credits.
  */
 import { spawn } from "node:child_process";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const REQUESTS = [
   { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "smoke", version: "1" } } },
@@ -14,7 +17,11 @@ const REQUESTS = [
   { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "dare_list_models", arguments: { kind: "video", response_format: "json" } } },
 ];
 
-const child = spawn("node", ["dist/stdio.js"], { stdio: ["pipe", "pipe", "inherit"], env: { ...process.env, DARE_CLIENT_TOKEN: "" } });
+// Isolate from any real stored credentials so the smoke test never touches a live account.
+const child = spawn("node", ["dist/cli.js"], {
+  stdio: ["pipe", "pipe", "inherit"],
+  env: { ...process.env, DARE_CLIENT_TOKEN: "", DARE_CONFIG_DIR: mkdtempSync(join(tmpdir(), "dare-smoke-")) },
+});
 
 let buffer = "";
 const responses = new Map();

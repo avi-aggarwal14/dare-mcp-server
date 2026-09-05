@@ -29,6 +29,27 @@ production JS bundles. That has two consequences worth holding onto:
 Everything in the request path has been exercised against Dare's real servers, with one
 exception: `generations.cancel` (input `{ id }`, same as get/delete, which both work).
 
+## Distribution (v0.2.0 onward)
+
+The package is published to npm as `dare-mcp-server`. Users install with
+`npx dare-mcp-server setup` — no clone, no build. Keep that path working; it is the
+documented install and everything in the README assumes it.
+
+- `src/cli.ts` is the single bin. No args = stdio server (what Claude launches).
+  Subcommands: `setup`, `check`, `http`, `--help`, `--version`.
+  `dist/stdio.js` and `dist/check.js` still exist so pre-0.2 configs keep working.
+- `src/store.ts` owns `~/.dare-mcp/config.json` (`0600`). `loadConfig` reads env first,
+  then the store. **Never** write the token into a Claude config file; those get synced.
+  `DARE_CONFIG_DIR` overrides the location, and tests must set it to a temp dir.
+- `src/setup.ts` is the wizard. It validates the token against Dare live before saving,
+  masks the paste, and backs up any config file it edits to `<path>.dare-backup`.
+- Releasing: bump `package.json`, match `SERVER_VERSION` in `src/server.ts`, add a
+  CHANGELOG entry, push a `v*` tag. `.github/workflows/publish.yml` does the rest and
+  fails if the tag and the package version disagree. Needs the `NPM_TOKEN` secret.
+
+When touching auth or error messages, remember the user-facing hint should point at
+`npx dare-mcp-server setup`, not at the README.
+
 ## How the contract was derived
 
 Dare's frontend is a TanStack SPA. The bundles are served unminified-ish at
@@ -86,7 +107,7 @@ src/http.ts      optional remote entrypoint
 ```bash
 npm run build
 node scripts/smoke.mjs                      # offline, no credentials, no credits
-DARE_CLIENT_TOKEN='eyJ...' npm run check    # live, read-only, free
+DARE_CLIENT_TOKEN='eyJ...' npm run check    # live, read-only, free (DARE_CONFIG_DIR to isolate)
 ```
 
 For a live generation, start at the floor: `seedance-2-5`, 4 seconds, 480p, count 1 — 20

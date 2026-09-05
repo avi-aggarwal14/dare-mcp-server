@@ -9,7 +9,10 @@ import { DareError } from "./errors.js";
 async function main(): Promise<void> {
   const config = loadConfig();
   if (!config.clientToken && !config.sessionToken) {
-    console.error("DARE_CLIENT_TOKEN is not set. See the README for how to copy it.");
+    console.error(
+      "No Dare credentials found.\n" +
+        "Run `npx dare-mcp-server setup` to connect your account, or set DARE_CLIENT_TOKEN.",
+    );
     process.exit(1);
   }
 

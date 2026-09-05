@@ -1,14 +1,148 @@
 # dare-mcp-server
 
-An MCP server that gives Claude Code and Claude (Cowork / desktop) direct access to
-[Dare](https://trydare.com) video generation — **Seedance 2.5**, Seedance 2.0, Veo 3.1,
-Kling 3.0 Pro and Hailuo 2.3 — billed to your existing Dare credit balance.
+[![npm](https://img.shields.io/npm/v/dare-mcp-server?color=cb3837&logo=npm)](https://www.npmjs.com/package/dare-mcp-server)
+[![node](https://img.shields.io/badge/node-%E2%89%A520-5fa04e?logo=nodedotjs&logoColor=white)](https://nodejs.org)
+[![licence](https://img.shields.io/badge/licence-MIT-blue)](./LICENSE)
 
-> **Heads up.** Dare does not publish a developer API. This server talks to the same private
-> oRPC endpoint (`api.trydare.com/rpc`) the Dare web app uses, authenticating as you with a
-> Clerk session. It works today — every tool has been exercised against Dare's live servers,
-> including a generation run to completion — but Dare can change that contract without notice,
-> and using it may sit outside Dare's terms of service. Your account, your credits, your call.
+**Generate video and images from inside Claude, billed to your own [Dare](https://trydare.com) credits.**
+
+Ask Claude for a shot and it makes one — Seedance 2.5, Seedance 2.0, Veo 3.1, Kling 3.0 Pro,
+Hailuo 2.3 for video, Nano Banana 2, GPT Image 2 and Seedream 5 Pro for stills. No new
+subscription, no API key to buy: it spends the Dare credits you already have.
+
+```
+> make me a 10 second 720p cinematic shot of rain on a neon Tokyo street, 16:9
+
+  Estimated 110 credits (you have 4,280). Generating…
+  Done: https://storage.trydare.com/…/rain-tokyo.mp4
+```
+
+Works with **Claude Code**, the **Claude desktop app**, and **Cowork**.
+
+> [!IMPORTANT]
+> Dare does not publish a developer API. This server talks to the same private endpoint the
+> Dare web app uses, signed in as you with your own browser session. It works today — every
+> tool here has been exercised against Dare's live servers, including a generation run to
+> completion — but Dare can change that contract without notice, and using it may sit outside
+> Dare's terms of service. Your account, your credits, your call.
+
+---
+
+## Install
+
+You need **[Node.js](https://nodejs.org) 20 or newer**. Check with `node --version`; if that
+errors, install the LTS build from nodejs.org (on a Mac, `brew install node` also works).
+
+Then run one command in your terminal:
+
+```bash
+npx dare-mcp-server setup
+```
+
+That is the whole install. The wizard:
+
+1. shows you where to find your Dare token (four clicks in your browser),
+2. checks it against Dare and prints your credit balance,
+3. saves it to `~/.dare-mcp/config.json` with owner-only permissions,
+4. adds Dare to Claude Code and/or the Claude desktop app for you.
+
+Restart Claude when it finishes. In Claude Code, `/mcp` should now list **dare**.
+
+`npx dare-mcp setup` works too — [`dare-mcp`](https://www.npmjs.com/package/dare-mcp) is a
+short alias that forwards to the same package.
+
+<details>
+<summary><b>Step 2 in detail: finding your Dare token</b></summary>
+
+The server signs in as you, using the long-lived Clerk `__client` cookie from your browser.
+It mints a fresh 60-second session token for every call, exactly as the Dare web app does.
+
+1. Sign in at <https://trydare.com> in Chrome, Edge, Arc or Brave.
+2. Open DevTools — **Cmd+Option+I** on macOS, **F12** on Windows and Linux.
+3. Go to the **Application** tab → **Storage** → **Cookies** → `https://clerk.trydare.com`.
+   (In Firefox and Safari the tab is called **Storage** instead.)
+4. Find the row named `__client` and copy its **Value** — a long string starting `eyJ`.
+   Copy the value, not the name.
+5. Paste it into the wizard. Your terminal will not echo it back.
+
+The cookie is valid for about a year, so this is a one-time step unless you sign out of Dare.
+
+**Treat it like a password.** It grants full access to your Dare account and can spend your
+credits. The wizard keeps it in one file with `0600` permissions and deliberately does *not*
+write it into your Claude config, so your Claude settings stay safe to sync or share.
+
+</details>
+
+<details>
+<summary><b>Prefer to do it by hand?</b></summary>
+
+**Claude Code**
+
+```bash
+claude mcp add dare --scope user -- npx -y dare-mcp-server
+```
+
+**Claude desktop app** — edit the config file:
+
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "dare": {
+      "command": "npx",
+      "args": ["-y", "dare-mcp-server"]
+    }
+  }
+}
+```
+
+Then quit and reopen the app.
+
+Both of these read your token from `~/.dare-mcp/config.json`. If you would rather pass it as an
+environment variable (CI, containers, a shared machine), set `DARE_CLIENT_TOKEN` instead — it
+takes precedence over the stored file. See [Configuration](#configuration).
+
+</details>
+
+<details>
+<summary><b>Running from source</b></summary>
+
+```bash
+git clone https://github.com/avi-aggarwal14/dare-mcp-server.git
+cd dare-mcp-server
+npm install          # builds automatically
+npm run setup        # same wizard
+```
+
+Point Claude at `node /absolute/path/to/dare-mcp-server/dist/cli.js` instead of `npx`.
+
+</details>
+
+## Check it works
+
+```bash
+npx dare-mcp-server check
+```
+
+Mints a token, reads your balance, lists a few library items. Run it any time the tools start
+failing — it is the fastest way to tell a stale cookie from a Dare outage.
+
+## First things to try
+
+Once Claude has restarted, just ask in plain English:
+
+```
+> how many Dare credits do I have?
+> what video models can I use, and what do they cost?
+> make a 5 second clip of a paper boat going down a rain gutter, cinematic, 16:9
+> use ~/shots/hero.png as a reference and animate the character walking toward camera
+> what's in my Dare library from this week?
+```
+
+Claude will quote you a credit estimate before spending anything, and you can always ask it to
+do a dry run first.
 
 ## Tools
 
@@ -28,90 +162,39 @@ Kling 3.0 Pro and Hailuo 2.3 — billed to your existing Dare credit balance.
 | `dare_delete_upload` | no | Delete an uploaded reference (destructive) |
 | `dare_list_projects` | no | Your Dare projects |
 
-## Install
+## CLI
 
-```bash
-git clone <this repo> dare-mcp-server
-cd dare-mcp-server
-npm install
-npm run build
-```
-
-Node 20 or newer.
-
-## Get your Dare token
-
-The server authenticates as you, using the long-lived Clerk `__client` cookie. It mints a fresh
-60-second session token for every call, exactly as the Dare web app does.
-
-1. Sign in at <https://trydare.com> in Chrome.
-2. Open DevTools (`Cmd+Option+I`) → **Application** → **Storage** → **Cookies** →
-   `https://clerk.trydare.com`.
-3. Copy the **Value** of the `__client` cookie. It is a long JWT starting `eyJ...`.
-
-That cookie is valid for about a year, so this is a one-time step unless you sign out.
-
-> Treat it like a password: it grants full access to your Dare account and its credits.
-> Keep it out of git and out of shared configs.
-
-Verify it:
-
-```bash
-DARE_CLIENT_TOKEN='eyJ...' npm run check
-```
-
-You should see a minted token and your credit balance.
-
-## Add to Claude Code
-
-```bash
-claude mcp add dare \
-  --scope user \
-  --env DARE_CLIENT_TOKEN='eyJ...' \
-  --env DARE_MAX_CREDITS_PER_CALL=500 \
-  --env DARE_UPLOAD_ROOTS="$HOME/Movies,$HOME/Pictures" \
-  -- node /absolute/path/to/dare-mcp-server/dist/stdio.js
-```
-
-Then in any session:
-
-```
-> make me a 10 second 720p cinematic shot of rain on a neon Tokyo street, 16:9
-```
-
-Check it registered with `/mcp`.
-
-## Add to Claude (Cowork / desktop app)
-
-Edit the Claude desktop config:
-
-- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
-
-```json
-{
-  "mcpServers": {
-    "dare": {
-      "command": "node",
-      "args": ["/absolute/path/to/dare-mcp-server/dist/stdio.js"],
-      "env": {
-        "DARE_CLIENT_TOKEN": "eyJ...",
-        "DARE_MAX_CREDITS_PER_CALL": "500",
-        "DARE_UPLOAD_ROOTS": "/Users/you/Movies,/Users/you/Pictures"
-      }
-    }
-  }
-}
-```
-
-Restart the app. The Dare tools appear in the tools menu, and Cowork sessions can call them
-alongside your files — generate a clip and have it written straight into a connected folder.
+| Command | What it does |
+| --- | --- |
+| `npx dare-mcp-server setup` | Interactive first-run wizard |
+| `npx dare-mcp-server check` | Verify credentials, print credit balance |
+| `npx dare-mcp-server` | Start the MCP server on stdio (Claude runs this for you) |
+| `npx dare-mcp-server http` | Optional HTTP transport for self-hosting |
+| `npx dare-mcp-server --help` | Everything above |
 
 ## Configuration
 
+Credentials are read in this order, first hit wins:
+
+1. `DARE_CLIENT_TOKEN` in the environment
+2. `~/.dare-mcp/config.json` (written by `setup`)
+
+The stored file is plain JSON, so you can edit it directly:
+
+```json
+{
+  "clientToken": "eyJ...",
+  "maxCreditsPerCall": 500,
+  "uploadRoots": ["/Users/you/Movies", "/Users/you/Pictures"]
+}
+```
+
+Everything else is environment variables:
+
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `DARE_CLIENT_TOKEN` | — | **Required.** The `__client` cookie from `clerk.trydare.com`. |
+| `DARE_CLIENT_TOKEN` | from stored config | The `__client` cookie from `clerk.trydare.com`. Required one way or the other. |
+| `DARE_CONFIG_DIR` | `~/.dare-mcp` | Where the stored config lives. |
 | `DARE_MAX_CREDITS_PER_CALL` | `500` | Refuse any single generation estimated above this many credits. `0` disables. |
 | `DARE_UPLOAD_ROOTS` | — (blocked) | Comma-separated directories `dare_upload_media` may read local files from. Empty means local file reads are refused. |
 | `DARE_ALLOW_URL_UPLOADS` | `true` | Allow uploading from a public URL. Private and link-local addresses are always refused. |
@@ -188,7 +271,7 @@ A stateless streamable-HTTP entrypoint is included for hosting the server behind
 ```bash
 DARE_CLIENT_TOKEN='eyJ...' \
 DARE_MCP_BEARER_TOKEN="$(openssl rand -hex 32)" \
-  PORT=3000 npm run start:http
+  PORT=3000 npx dare-mcp-server http
 ```
 
 `POST /mcp`, health check at `/health`. The server **refuses to start** without a bearer token
@@ -200,7 +283,7 @@ regardless of configuration.
 ## Troubleshooting
 
 **`DARE_UNAUTHORIZED`** — the `__client` cookie is missing, stale, or you signed out of Dare in
-that browser. Re-copy it and re-run `npm run check`.
+that browser. Run `npx dare-mcp-server setup` again with a fresh value.
 
 **`DARE_UNKNOWN_PROCEDURE`** — Dare changed their internal RPC. The procedure names live in
 `src/dare.ts`; compare against a fresh capture from the web app's network tab.
@@ -217,8 +300,9 @@ transport where local reads are disabled.
 
 ## Security notes
 
-- The `__client` token is account-level access. Anything that can read your MCP config can
-  spend your credits.
+- The `__client` token is account-level access. Anything that can read it can spend your credits.
+  `setup` therefore stores it in `~/.dare-mcp/config.json` at `0600` rather than in your Claude
+  config, which is often synced, backed up or committed.
 - `dare_generate_*` calls are never retried automatically after an auth failure. Dare's create
   endpoint has no idempotency key, so a blind retry could bill you twice.
 - Uploading from a URL resolves the host first, refuses loopback, private, link-local, CGNAT,
@@ -228,7 +312,7 @@ transport where local reads are disabled.
 ## How it works
 
 ```
-Claude Code / Cowork
+Claude Code / desktop / Cowork
         │  MCP (stdio)
         ▼
   dare-mcp-server
@@ -271,6 +355,37 @@ or `failed` at the end. The finished file is at `generation.outputAsset.storageU
 unrecognised is treated as still-running, so a renamed in-progress state is never mistaken
 for a finished one.
 
+## Uninstall
+
+```bash
+claude mcp remove dare --scope user     # Claude Code
+rm -rf ~/.dare-mcp                      # your stored token
+```
+
+For the desktop app, delete the `"dare"` entry from `claude_desktop_config.json`. Nothing else
+is installed — `npx` does not leave the package behind.
+
+## Contributing
+
+Issues and pull requests are welcome, especially:
+
+- Dare changed a procedure name or spec shape and something broke
+- pricing drifted from the table above
+- a model was added or removed from Dare's composer
+
+```bash
+git clone https://github.com/avi-aggarwal14/dare-mcp-server.git
+cd dare-mcp-server
+npm install
+npm run build
+npm run check        # needs a real token
+npm run inspect      # MCP Inspector against a local build
+```
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md). Please never paste a `__client` token into an issue,
+a log, or a test fixture — it is a live credential.
+
 ## Licence
 
-MIT. Not affiliated with, endorsed by, or supported by Dare.
+MIT. Not affiliated with, endorsed by, or supported by Dare. "Dare", "Seedance", "Veo", "Kling"
+and "Hailuo" belong to their respective owners.

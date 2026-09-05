@@ -19,5 +19,9 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      - name: Alias version lockstep
+        run: node scripts/sync-alias.mjs --check
+      - name: Setup + store unit tests
+        run: node scripts/setup-test.mjs
       - name: Smoke test (stdio, no credentials)
         run: node scripts/smoke.mjs
