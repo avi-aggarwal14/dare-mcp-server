@@ -1,0 +1,59 @@
+name: Bug report
+description: Something does not work
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Never paste your `__client` token.** Redact it as `eyJ...` in any log or config you share.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: Include the error code if there is one (e.g. DARE_UNAUTHORIZED).
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Ran `npx dare-mcp-server setup`
+        2. Asked Claude for "..."
+        3. Got ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `npx dare-mcp-server --version`
+    validations:
+      required: true
+  - type: dropdown
+    id: client
+    attributes:
+      label: Which Claude
+      multiple: true
+      options: [Claude Code, Claude desktop app, Cowork, Other MCP client]
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: OS and Node version
+      placeholder: macOS 15.3, Node 22.11
+    validations:
+      required: true
+  - type: textarea
+    id: check
+    attributes:
+      label: Output of `npx dare-mcp-server check`
+      description: Redact anything token-shaped.
+      render: text

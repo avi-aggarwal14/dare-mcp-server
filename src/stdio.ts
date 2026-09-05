@@ -9,8 +9,8 @@ async function main(): Promise<void> {
   if (!config.clientToken && !config.sessionToken) {
     // stderr only: stdout is the JSON-RPC channel.
     process.stderr.write(
-      `${SERVER_NAME}: DARE_CLIENT_TOKEN is not set. Tools will start but every Dare call will fail with ` +
-        `DARE_UNAUTHORIZED until it is. See the README for how to copy the __client cookie.\n`,
+      `${SERVER_NAME}: no Dare credentials found. Tools will start but every Dare call will fail with ` +
+        `DARE_UNAUTHORIZED until you run \`npx dare-mcp-server setup\` (or set DARE_CLIENT_TOKEN).\n`,
     );
   }
 

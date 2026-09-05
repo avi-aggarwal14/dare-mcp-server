@@ -1,27 +1,66 @@
 {
   "name": "dare-mcp-server",
-  "version": "0.1.0",
-  "description": "MCP server for Dare (trydare.com) AI video generation — Seedance 2.5, Veo 3.1, Kling 3, Hailuo 2.3 and more, billed to your Dare credits.",
+  "version": "0.2.0",
+  "description": "MCP server for Dare (trydare.com) AI video generation \u2014 Seedance 2.5, Veo 3.1, Kling 3, Hailuo 2.3 and more, billed to your own Dare credits.",
   "type": "module",
+  "license": "MIT",
+  "author": "Avi Aggarwal (https://github.com/avi-aggarwal14)",
+  "homepage": "https://github.com/avi-aggarwal14/dare-mcp-server#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/avi-aggarwal14/dare-mcp-server.git"
+  },
+  "bugs": {
+    "url": "https://github.com/avi-aggarwal14/dare-mcp-server/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "mcp-server",
+    "claude",
+    "claude-code",
+    "anthropic",
+    "dare",
+    "trydare",
+    "seedance",
+    "veo",
+    "kling",
+    "hailuo",
+    "video-generation",
+    "text-to-video",
+    "image-generation",
+    "ai-video"
+  ],
   "bin": {
-    "dare-mcp-server": "dist/stdio.js",
+    "dare-mcp-server": "dist/cli.js",
     "dare-mcp-check": "dist/check.js"
   },
-  "main": "dist/stdio.js",
+  "main": "dist/cli.js",
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsc",
-    "start": "node dist/stdio.js",
-    "start:http": "node dist/http.js",
-    "inspect": "npx @modelcontextprotocol/inspector node dist/stdio.js",
+    "clean": "rm -rf dist",
+    "setup": "node dist/cli.js setup",
+    "start": "node dist/cli.js",
+    "start:http": "node dist/cli.js http",
+    "check": "node dist/cli.js check",
+    "inspect": "npx @modelcontextprotocol/inspector node dist/cli.js",
+    "smoke": "node scripts/smoke.mjs",
     "prepare": "npm run build",
-    "check": "node dist/check.js"
+    "prepublishOnly": "npm run clean && npm run build",
+    "test": "npm run build && node scripts/setup-test.mjs && node scripts/smoke.mjs",
+    "test:setup": "node scripts/setup-test.mjs"
   },
   "engines": {
     "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

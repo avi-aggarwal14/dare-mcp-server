@@ -24,9 +24,10 @@ export class DareError extends Error {
 }
 
 const AUTH_HINT =
-  "Set DARE_CLIENT_TOKEN to the `__client` cookie value from clerk.trydare.com while signed in to trydare.com " +
-  "(DevTools > Application > Cookies > https://clerk.trydare.com). If it was already set, the session has expired " +
-  "or been signed out — sign in again and copy a fresh value.";
+  "Run `npx dare-mcp-server setup` in a terminal to (re)connect your Dare account. It asks for the `__client` " +
+  "cookie value from clerk.trydare.com while signed in to trydare.com " +
+  "(DevTools > Application > Cookies > https://clerk.trydare.com), checks it, and saves it. " +
+  "If it was already set, the session has expired or been signed out — sign in again and copy a fresh value.";
 
 export function authError(message: string): DareError {
   return new DareError(message, { code: "DARE_UNAUTHORIZED", status: 401, hint: AUTH_HINT });
