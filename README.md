@@ -3,6 +3,7 @@
 [![npm](https://img.shields.io/npm/v/dare-mcp-server?color=cb3837&logo=npm)](https://www.npmjs.com/package/dare-mcp-server)
 [![node](https://img.shields.io/badge/node-%E2%89%A520-5fa04e?logo=nodedotjs&logoColor=white)](https://nodejs.org)
 [![licence](https://img.shields.io/badge/licence-MIT-blue)](./LICENSE)
+[![dare-mcp-server MCP server](https://glama.ai/mcp/servers/avi-aggarwal14/dare-mcp-server/badges/score.svg)](https://glama.ai/mcp/servers/avi-aggarwal14/dare-mcp-server)
 
 **Generate video and images from inside Claude, billed to your own [Dare](https://trydare.com) credits.**
 
@@ -384,6 +385,10 @@ npm run inspect      # MCP Inspector against a local build
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md). Please never paste a `__client` token into an issue,
 a log, or a test fixture — it is a live credential.
+
+## Author
+
+Built by [Avi Aggarwal](https://avi-aggarwal.com) in London. I also run [hypjam](https://hypjam.com), a UGC agency for startups.
 
 ## Licence
 
