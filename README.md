@@ -52,6 +52,12 @@ Restart Claude when it finishes. In Claude Code, `/mcp` should now list **dare**
 `npx dare-mcp setup` works too — [`dare-mcp`](https://www.npmjs.com/package/dare-mcp) is a
 short alias that forwards to the same package.
 
+**Claude desktop app, no terminal:** download `dare-mcp-server-0.2.0.mcpb` from the
+[mcpb-0.2.0 release](https://github.com/avi-aggarwal14/dare-mcp-server/releases/tag/mcpb-0.2.0), open it,
+and paste your Dare token when asked. It is also listed on the
+[official MCP Registry](https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.avi-aggarwal14/dare-mcp-server)
+as `io.github.avi-aggarwal14/dare-mcp-server`.
+
 <details>
 <summary><b>Step 2 in detail: finding your Dare token</b></summary>
 
