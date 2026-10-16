@@ -1,7 +1,7 @@
 {
   "name": "dare-mcp-server",
   "mcpName": "io.github.avi-aggarwal14/dare-mcp-server",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "MCP server for Dare (trydare.com) AI video generation: Seedance 2.5, Veo 3.1, Kling 3, Hailuo 2.3 and more, billed to your own Dare credits.",
   "type": "module",
   "license": "MIT",

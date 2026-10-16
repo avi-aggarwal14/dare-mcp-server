@@ -4,7 +4,7 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [semver](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.1] - 2026-10-16
 
 ### Fixed
 - `dare_upload_media` failed on every input because Dare's `storage.generateUploadUrl` now requires
@@ -45,5 +45,6 @@ Seedance 2.5 and 2.0, Veo 3.1, Kling 3.0 Pro, Hailuo 2.3, Nano Banana 2, GPT Ima
 Seedream 5 Pro. Clerk session minting, Dare's exact credit pricing formula, cost guard, upload
 allowlist, SSRF-hardened URL uploads, and an optional bearer-authenticated HTTP transport.
 
+[0.2.1]: https://github.com/avi-aggarwal14/dare-mcp-server/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/avi-aggarwal14/dare-mcp-server/releases/tag/v0.2.0
 [0.1.0]: https://github.com/avi-aggarwal14/dare-mcp-server/releases/tag/v0.1.0
