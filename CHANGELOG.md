@@ -4,6 +4,12 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [semver](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- `dare_upload_media` failed on every input because Dare's `storage.generateUploadUrl` now requires
+  `sizeBytes`. The tool now sends the byte length of the file it is about to upload.
+
 ## [0.2.0] — 2026-09-05
 
 The "install it in one command" release.
