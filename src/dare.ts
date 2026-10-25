@@ -480,7 +480,8 @@ export class DareService {
     // 1. Ask Dare for a signed PUT target.
     const signed = await this.rpc.call<{ storageKey?: string; storageUrl?: string; uploadUrl?: string }>(
       "storage.generateUploadUrl",
-      { contentType, fileExtension },
+      // Dare's storage.generateUploadUrl started requiring sizeBytes (Oct 2026); without it every upload fails.
+      { contentType, fileExtension, sizeBytes: bytes.byteLength },
     );
     if (!signed?.uploadUrl || !signed.storageKey) {
       throw new DareError("Dare did not return a usable upload URL.", {

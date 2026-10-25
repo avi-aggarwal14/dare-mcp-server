@@ -1,7 +1,7 @@
 {
   "name": "dare-mcp",
-  "version": "0.2.0",
-  "description": "Short alias for dare-mcp-server — MCP server for Dare (trydare.com) AI video generation. Installs and runs the real package.",
+  "version": "0.2.1",
+  "description": "Short alias for dare-mcp-server: MCP server for Dare (trydare.com) AI video generation. Installs and runs the real package.",
   "type": "module",
   "license": "MIT",
   "author": "Avi Aggarwal (https://github.com/avi-aggarwal14)",
@@ -41,6 +41,6 @@
     "access": "public"
   },
   "dependencies": {
-    "dare-mcp-server": "0.2.0"
+    "dare-mcp-server": "0.2.1"
   }
 }
